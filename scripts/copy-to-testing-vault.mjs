@@ -89,12 +89,12 @@ async function main() {
 	const repoRoot = process.cwd();
 	const pluginsDir = await resolvePluginsDir(args, repoRoot);
 
-	const buildDir = path.join(repoRoot, "build");
+	const buildDir = path.join(repoRoot, "dist");
 	const manifestPath = path.join(repoRoot, "manifest.json");
 
 	if (!(await pathExists(buildDir))) {
 		throw new Error(
-			"Missing ./build output folder. Run `npm run build` first (or `npm run build:copy`).",
+			"Missing ./dist output folder. Run `npm run build` first (or `npm run build:copy`).",
 		);
 	}
 

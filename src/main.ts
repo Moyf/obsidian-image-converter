@@ -38,6 +38,7 @@ import {
 } from "./ImageConverterSettings";
 
 import { PresetSelectionModal } from "./PresetSelectionModal";
+import { ImageProcessingPauseState } from "./ImageProcessingPauseState";
 
 export default class ImageConverterPlugin extends Plugin {
     settings!: ImageConverterSettings;
@@ -75,6 +76,7 @@ export default class ImageConverterPlugin extends Plugin {
     
     private processedImage: ArrayBuffer | null = null;
     private temporaryBuffers: (ArrayBuffer | Blob | null)[] = [];
+    private imageProcessingPauseState = new ImageProcessingPauseState();
 
     private updateBodyStateClasses() {
         activeDocument.body.classList.toggle(
@@ -321,6 +323,27 @@ export default class ImageConverterPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'skip-next-pasted-image-processing',
+            name: 'Skip processing for next pasted image',
+            callback: () => {
+                this.imageProcessingPauseState.armSkipNextPaste();
+                new Notice('The next pasted image will be saved without processing.');
+            }
+        });
+
+        this.addCommand({
+            id: 'toggle-auto-image-processing',
+            name: 'Toggle automatic image processing',
+            callback: async () => {
+                this.settings.autoImageProcessingPaused = !this.settings.autoImageProcessingPaused;
+                await this.saveSettings();
+                new Notice(this.settings.autoImageProcessingPaused
+                    ? 'Automatic image processing paused.'
+                    : 'Automatic image processing resumed.');
+            }
+        });
+
+        this.addCommand({
             id: 'process-all-images-current-note',
             name: 'Process all images in current note',
             callback: () => {
@@ -498,6 +521,7 @@ export default class ImageConverterPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on("editor-drop", async (evt: DragEvent, editor: Editor) => {
                 if (evt.defaultPrevented) return;
+                if (this.settings.autoImageProcessingPaused) return;
 
                 if (!evt.dataTransfer) {
                     console.warn("DataTransfer object is null initially. Cannot process drop event.");
@@ -536,6 +560,7 @@ export default class ImageConverterPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on("editor-paste", async (evt: ClipboardEvent, editor: Editor) => {
                 if (evt.defaultPrevented) return;
+                if (this.settings.autoImageProcessingPaused) return;
 
                 if (!evt.clipboardData) {
                     console.warn("ClipboardData object is null. Cannot process paste event.");
@@ -561,8 +586,14 @@ export default class ImageConverterPlugin extends Plugin {
                 );
 
                 if (hasSupportedItems) {
+                    const passthroughFile = this.imageProcessingPauseState.consumeSkipNextPaste()
+                        ? itemData.find(data => data.kind === "file" && data.file &&
+                            this.supportedImageFormats.isSupported(data.type, data.file.name) &&
+                            !this.folderAndFilenameManagement.matchesPatterns(data.file.name, this.settings.neverProcessFilenames)
+                        )?.file ?? undefined
+                        : undefined;
                     evt.preventDefault();
-                    await this.handlePaste(itemData, editor, cursor);
+                    await this.handlePaste(itemData, editor, cursor, passthroughFile);
                 }
             })
         );
@@ -915,7 +946,7 @@ export default class ImageConverterPlugin extends Plugin {
         }
     }
 
-    private async handlePaste(itemData: { kind: string; type: string; file: File | null }[], editor: Editor, cursor: EditorPosition) {
+    private async handlePaste(itemData: { kind: string; type: string; file: File | null }[], editor: Editor, cursor: EditorPosition, passthroughFile?: File) {
         // Step 1: Filter Supported Image Files
         // - Filter the pasted `itemData` to keep only supported image files.
         const supportedFiles = itemData
@@ -937,11 +968,12 @@ export default class ImageConverterPlugin extends Plugin {
         // Step 3: Map Files to Processing Promises
         // - Create an array of promises, each responsible for processing one pasted file.
         const filePromises = supportedFiles.map(async (file) => {
+            const passThroughUnprocessed = file === passthroughFile;
             // Check modal behavior setting
             const { modalBehavior } = this.settings;
-            let showModal = modalBehavior === "always";
+            let showModal = !passThroughUnprocessed && modalBehavior === "always";
 
-            if (modalBehavior === "ask") {
+            if (!passThroughUnprocessed && modalBehavior === "ask") {
                 showModal = await new Promise<boolean>((resolve) => {
                     new ConfirmDialog(
                         this.app,
@@ -1021,6 +1053,13 @@ export default class ImageConverterPlugin extends Plugin {
                     this.settings.nonDestructiveResizeSettings.resizePresets,
                     'Resize'
                 );
+            }
+            if (passThroughUnprocessed) {
+                selectedConversionPreset = {
+                    ...selectedConversionPreset,
+                    outputFormat: 'NONE',
+                    resizeMode: 'None'
+                };
             }
             // Step 3.2: Determine Destination and Filename
             // - Calculate the destination path and new filename for the current file.
@@ -1117,8 +1156,10 @@ export default class ImageConverterPlugin extends Plugin {
                     // Step 3.5.2: Check for Skipped Conversion BEFORE Processing
                     // - Check if the current file matches a skip pattern in the conversion preset.
                     // - If it matches, skip image processing entirely.
-                    if (selectedConversionPreset && this.folderAndFilenameManagement.shouldSkipConversion(file.name, selectedConversionPreset)) {
-                        new Notice(`Skipped conversion of image "${file.name}" due to skip pattern match in the conversion preset.`);
+                    if (passThroughUnprocessed || (selectedConversionPreset && this.folderAndFilenameManagement.shouldSkipConversion(file.name, selectedConversionPreset))) {
+                        if (!passThroughUnprocessed) {
+                            new Notice(`Skipped conversion of image "${file.name}" due to skip pattern match in the conversion preset.`);
+                        }
 
                         // Save the original file directly to the vault without any processing.
                         // const originalSize = file.size;

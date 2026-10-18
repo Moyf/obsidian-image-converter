@@ -133,6 +133,166 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(handlePaste).not.toHaveBeenCalled();
   });
+
+  it('does not consume the one-shot skip request for an event Obsidian already handled', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    const handlePaste = vi.fn().mockResolvedValue(undefined);
+    (plugin as any).handlePaste = handlePaste;
+    (plugin as any).dropPasteRegisterEvents();
+    (plugin as any).imageProcessingPauseState.armSkipNextPaste();
+    const handler = getRegisteredWorkspaceHandler(app, 'editor-paste');
+    const imageFile = makeImageFile();
+
+    await handler({
+      defaultPrevented: true,
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => imageFile }] },
+      preventDefault: vi.fn(),
+    }, { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) });
+
+    await handler({
+      defaultPrevented: false,
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => imageFile }] },
+      preventDefault: vi.fn(),
+    }, { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) });
+
+    expect(handlePaste).toHaveBeenCalledTimes(1);
+    expect(handlePaste.mock.calls[0][3]).toBe(imageFile);
+  });
+
+  it('consumes one-shot skip only on a supported image paste and skips just the first supported image', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    const firstImage = makeImageFile();
+    const secondImage = new File([new Uint8Array([1, 2, 3])], 'second.png', { type: 'image/png' });
+    const handlePaste = vi.fn().mockResolvedValue(undefined);
+    (plugin as any).handlePaste = handlePaste;
+    (plugin as any).supportedImageFormats.isSupported = vi.fn((_type: string, name: string) => name.endsWith('.png'));
+    (plugin as any).dropPasteRegisterEvents();
+    (plugin as any).imageProcessingPauseState.armSkipNextPaste();
+    const handler = getRegisteredWorkspaceHandler(app, 'editor-paste');
+    const editor = { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) };
+
+    const textOnlyPaste = { defaultPrevented: false, clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] }, preventDefault: vi.fn() };
+    await handler(textOnlyPaste, editor);
+    expect(textOnlyPaste.preventDefault).not.toHaveBeenCalled();
+    expect(handlePaste).not.toHaveBeenCalled();
+
+    const imagePaste = {
+      defaultPrevented: false,
+      clipboardData: { items: [
+        { kind: 'file', type: 'image/png', getAsFile: () => firstImage },
+        { kind: 'file', type: 'image/png', getAsFile: () => secondImage },
+      ] },
+      preventDefault: vi.fn(),
+    };
+    await handler(imagePaste, editor);
+    expect(imagePaste.preventDefault).toHaveBeenCalledOnce();
+    expect(handlePaste.mock.calls[0][3]).toBe(firstImage);
+
+    await handler({
+      defaultPrevented: false,
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => secondImage }] },
+      preventDefault: vi.fn(),
+    }, editor);
+    expect(handlePaste.mock.calls[1][3]).toBeUndefined();
+  });
+
+  it('keeps one-shot skip armed after unsupported and never-process image pastes', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    const skippedImage = new File([new Uint8Array([1])], 'skip.png', { type: 'image/png' });
+    const eligibleImage = makeImageFile();
+    const handlePaste = vi.fn().mockResolvedValue(undefined);
+    (plugin as any).handlePaste = handlePaste;
+    (plugin as any).supportedImageFormats.isSupported = vi.fn((_type: string, name: string) => name.endsWith('.png'));
+    (plugin as any).folderAndFilenameManagement.matchesPatterns = vi.fn((name: string) => name === 'skip.png');
+    (plugin as any).dropPasteRegisterEvents();
+    (plugin as any).imageProcessingPauseState.armSkipNextPaste();
+    const handler = getRegisteredWorkspaceHandler(app, 'editor-paste');
+    const editor = { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) };
+
+    for (const [name, file, type] of [
+      ['unsupported.gif', new File([new Uint8Array([1])], 'unsupported.gif', { type: 'image/gif' }), 'image/gif'],
+      ['skip.png', skippedImage, 'image/png'],
+    ] as const) {
+      const event = {
+        defaultPrevented: false,
+        clipboardData: { items: [{ kind: 'file', type, getAsFile: () => file }] },
+        preventDefault: vi.fn(),
+      };
+      await handler(event, editor);
+      expect(event.preventDefault, name).not.toHaveBeenCalled();
+    }
+
+    await handler({
+      defaultPrevented: false,
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => eligibleImage }] },
+      preventDefault: vi.fn(),
+    }, editor);
+    expect(handlePaste).toHaveBeenCalledOnce();
+    expect(handlePaste.mock.calls[0][3]).toBe(eligibleImage);
+  });
+
+  it('consumes one-shot skip synchronously across overlapping paste events', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    const handlePaste = vi.fn(() => new Promise<void>(() => undefined));
+    (plugin as any).handlePaste = handlePaste;
+    (plugin as any).dropPasteRegisterEvents();
+    (plugin as any).imageProcessingPauseState.armSkipNextPaste();
+    const handler = getRegisteredWorkspaceHandler(app, 'editor-paste');
+    const editor = { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) };
+    const eventFor = (file: File) => ({
+      defaultPrevented: false,
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+      preventDefault: vi.fn(),
+    });
+
+    void handler(eventFor(makeImageFile()), editor);
+    void handler(eventFor(new File([new Uint8Array([2])], 'second.png', { type: 'image/png' })), editor);
+
+    expect(handlePaste).toHaveBeenCalledTimes(2);
+    expect(handlePaste.mock.calls[0][3]).toBeTruthy();
+    expect(handlePaste.mock.calls[1][3]).toBeUndefined();
+  });
+
+  it('leaves paste and drop to Obsidian while persistent automatic processing is paused', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    (plugin as any).settings.autoImageProcessingPaused = true;
+    const handlePaste = vi.fn().mockResolvedValue(undefined);
+    const handleDrop = vi.fn().mockResolvedValue(undefined);
+    (plugin as any).handlePaste = handlePaste;
+    (plugin as any).handleDrop = handleDrop;
+    (plugin as any).dropPasteRegisterEvents();
+
+    const paste = { defaultPrevented: false, clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => makeImageFile() }] }, preventDefault: vi.fn() };
+    const drop = { defaultPrevented: false, dataTransfer: { files: [makeImageFile()] }, preventDefault: vi.fn() };
+    await getRegisteredWorkspaceHandler(app, 'editor-paste')(paste, { getCursor: vi.fn(() => ({ line: 0, ch: 0 })) });
+    await getRegisteredWorkspaceHandler(app, 'editor-drop')(drop, { posAtMouse: vi.fn(() => ({ line: 0, ch: 0 })) });
+
+    expect(paste.preventDefault).not.toHaveBeenCalled();
+    expect(drop.preventDefault).not.toHaveBeenCalled();
+    expect(handlePaste).not.toHaveBeenCalled();
+    expect(handleDrop).not.toHaveBeenCalled();
+  });
+
+  it('persists the automatic processing toggle across settings reloads', async () => {
+    const { app } = makeAppWithNote();
+    const plugin = new ImageConverterPlugin(app as any, fakePluginManifest({ id: 'image-converter' }));
+    let savedData: any;
+    vi.spyOn(plugin as any, 'loadData').mockImplementation(async () => savedData ?? null);
+    vi.spyOn(plugin as any, 'saveData').mockImplementation(async (data: any) => { savedData = structuredClone(data); });
+    const commands: any[] = [];
+    (plugin as any).addCommand = vi.fn((command: any) => commands.push(command));
+
+    await plugin.onload();
+    const toggleCommand = commands.find((command) => command.id === 'toggle-auto-image-processing');
+    expect(toggleCommand).toBeTruthy();
+    await toggleCommand.callback();
+    expect(savedData.autoImageProcessingPaused).toBe(true);
+
+    const reloadedPlugin = new ImageConverterPlugin(app as any, fakePluginManifest({ id: 'image-converter' }));
+    vi.spyOn(reloadedPlugin as any, 'loadData').mockImplementation(async () => savedData);
+    await reloadedPlugin.loadSettings();
+    expect((reloadedPlugin as any).settings.autoImageProcessingPaused).toBe(true);
+  });
 });
 
 describe('activeDocument body state compatibility', () => {
