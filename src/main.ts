@@ -335,13 +335,19 @@ export default class ImageConverterPlugin extends Plugin {
         this.addCommand({
             id: 'toggle-auto-image-processing',
             name: 'Toggle automatic image processing',
-            callback: async () => {
-                this.settings.autoImageProcessingPaused = !this.settings.autoImageProcessingPaused;
-                await this.saveSettings();
-                new Notice(this.settings.autoImageProcessingPaused
-                    ? 'Automatic image processing paused.'
-                    : 'Automatic image processing resumed.');
-            }
+            callback: () => this.setAutomaticImageProcessingPaused(!this.settings.autoImageProcessingPaused)
+        });
+
+        this.addCommand({
+            id: 'pause-auto-image-processing',
+            name: 'Pause automatic image processing',
+            callback: () => this.setAutomaticImageProcessingPaused(true)
+        });
+
+        this.addCommand({
+            id: 'resume-auto-image-processing',
+            name: 'Resume automatic image processing',
+            callback: () => this.setAutomaticImageProcessingPaused(false)
         });
 
         this.addCommand({
@@ -514,6 +520,20 @@ export default class ImageConverterPlugin extends Plugin {
         return false;
     }
 
+    private async setAutomaticImageProcessingPaused(paused: boolean): Promise<void> {
+        this.settings.autoImageProcessingPaused = paused;
+        await this.saveSettings();
+        new Notice(paused
+            ? 'Automatic image processing paused.'
+            : 'Automatic image processing resumed.');
+    }
+
+    private handlePausedImageImport(): boolean {
+        if (!this.settings.autoImageProcessingPaused) return false;
+        new Notice('Automatic image processing is paused. Images will be added without compression.');
+        return true;
+    }
+
     private dropPasteRegisterEvents() {
         // On mobile DROP events are not supported, but lets still check as a precaution
         if (Platform.isMobile) return;
@@ -522,17 +542,9 @@ export default class ImageConverterPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on("editor-drop", async (evt: DragEvent, editor: Editor, info?: { file: TFile | null }) => {
                 if (evt.defaultPrevented) return;
-                if (this.settings.autoImageProcessingPaused) return;
 
                 if (!evt.dataTransfer) {
                     console.warn("DataTransfer object is null initially. Cannot process drop event.");
-                    return;
-                }
-
-                // Get the actual drop position from the mouse event
-                const pos = editor.posAtMouse(evt);
-                if (!pos) {
-                    console.warn("Could not determine drop position");
                     return;
                 }
 
@@ -549,6 +561,12 @@ export default class ImageConverterPlugin extends Plugin {
                 );
 
                 if (hasSupportedFiles) {
+                    if (this.handlePausedImageImport()) return;
+                    const pos = editor.posAtMouse(evt);
+                    if (!pos) {
+                        console.warn("Could not determine drop position");
+                        return;
+                    }
                     evt.preventDefault(); // Prevent default behavior
 
                     // We don't need setTimeout anymore since we're using the drop position
@@ -561,14 +579,11 @@ export default class ImageConverterPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on("editor-paste", async (evt: ClipboardEvent, editor: Editor, info?: { file: TFile | null }) => {
                 if (evt.defaultPrevented) return;
-                if (this.settings.autoImageProcessingPaused) return;
 
                 if (!evt.clipboardData) {
                     console.warn("ClipboardData object is null. Cannot process paste event.");
                     return;
                 }
-
-                const cursor = editor.getCursor();
 
                 // Extract Clipboard Item Information
                 const itemData: { kind: string, type: string, file: File | null }[] = [];
@@ -587,6 +602,8 @@ export default class ImageConverterPlugin extends Plugin {
                 );
 
                 if (hasSupportedItems) {
+                    if (this.handlePausedImageImport()) return;
+                    const cursor = editor.getCursor();
                     const passthroughFile = this.imageProcessingPauseState.consumeSkipNextPaste()
                         ? itemData.find(data => data.kind === "file" && data.file &&
                             this.supportedImageFormats.isSupported(data.type, data.file.name) &&
@@ -594,6 +611,9 @@ export default class ImageConverterPlugin extends Plugin {
                         )?.file ?? undefined
                         : undefined;
                     evt.preventDefault();
+                    if (passthroughFile) {
+                        new Notice('Compression skipped for this image. Automatic processing resumes with the next image.');
+                    }
                     await this.handlePaste(itemData, editor, cursor, passthroughFile, info?.file ?? undefined);
                 }
             })

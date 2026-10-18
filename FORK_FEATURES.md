@@ -2,10 +2,13 @@
 
 ## Pause automatic image processing
 
-Two command palette commands are available:
+Four command palette commands are available:
 
 - **Skip processing for next pasted image** preserves the original bytes of the next supported pasted image, then automatically resumes processing. Text-only pastes, unsupported files, drops, and events already handled by another plugin do not consume the request. When pasting multiple images, only the first eligible image is skipped. Folder, filename, and link presets still apply to that image.
 - **Toggle automatic image processing** pauses or resumes automatic paste/drop processing. This state survives plugin reloads. While paused, Obsidian handles attachments using its native attachment location. Manual processing commands remain available. A pending one-shot request remains pending until automatic processing resumes.
+- **Pause automatic image processing** and **Resume automatic image processing** explicitly set the processing state. Running either command repeatedly keeps that state instead of toggling it.
+
+A notice confirms when the one-shot skip is used and that processing resumes with the next image. While processing is paused, pasting or dropping supported images also shows a notice; text-only or unsupported imports remain silent.
 
 ## Folder-based presets
 
@@ -27,6 +30,7 @@ Local deployment copies `main.js`, `manifest.json`, and `styles.css` and creates
 
 - 命令 `Skip processing for next pasted image`：下一张粘贴的受支持图片保留原始字节，然后自动恢复。一次粘贴多张时仅跳过第一张；纯文字、拖入图片、不支持的文件和已被其他插件处理的事件不会消耗这次机会。文件夹、命名和链接预设仍然生效。
 - 命令 `Toggle automatic image processing`：切换粘贴和拖入图片的自动处理，状态在插件重载后仍然保留。暂停期间由 Obsidian 原生处理附件，使用其原生附件位置；手动处理命令继续可用。暂停期间未使用的一次性跳过机会会保留到恢复后。
+- 独立命令 `Pause automatic image processing` 和 `Resume automatic image processing`：分别暂停、恢复图片处理，重复执行会保持对应状态。一次性跳过生效时会提示当前图片不压缩、下张起恢复；常驻暂停时粘贴或拖入受支持图片也会提示，纯文字和不支持的文件不提示。
 - 文件夹配置：先把所需的存储位置、命名、压缩、链接和尺寸预设保存成全局预设，再在设置页的 `Folder-based presets` 中点击 `Add rule`，填写笔记所在文件夹并选择该全局预设。例如把 `Projects` 绑定到包含 `Projects/Assets` 目标目录和 WebP 质量 75 的全局预设。
 - 规则包含子文件夹，匹配区分大小写并按文件夹边界判断；路径最具体的规则优先，同路径取第一条启用规则。`/` 表示整个库。空路径、越级路径和已删除的全局预设会被忽略，仍可匹配父级规则；分类预设缺失时回退到该分类的全局选择。
 - 未匹配的笔记使用全局配置。配置规则后，每次导入弹窗使用独立快照，不跨导入记忆临时模板调整；修改命名预设请在设置页进行。删除全部规则后恢复原有弹窗记忆行为。手动批处理使用其显式配置；常驻暂停优先于文件夹规则。

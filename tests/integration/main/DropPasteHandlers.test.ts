@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ImageConverterPlugin from '../../../src/main';
 import { fakeApp, fakeVault, fakeTFile, fakePluginManifest } from '../../factories/obsidian';
-import { Platform } from 'obsidian';
+import { Notice, Platform } from 'obsidian';
 
 function makeAppWithNote() {
   const note = fakeTFile({ path: 'Notes/n.md', name: 'n.md', extension: 'md' });
@@ -84,6 +84,7 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
   beforeEach(() => {
     originalMobile = Platform.isMobile;
     Platform.isMobile = false;
+    Notice.instances.length = 0;
   });
 
   afterEach(() => {
@@ -175,6 +176,7 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
     await handler(textOnlyPaste, editor);
     expect(textOnlyPaste.preventDefault).not.toHaveBeenCalled();
     expect(handlePaste).not.toHaveBeenCalled();
+    expect(Notice.instances).toHaveLength(0);
 
     const imagePaste = {
       defaultPrevented: false,
@@ -187,6 +189,8 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
     await handler(imagePaste, editor);
     expect(imagePaste.preventDefault).toHaveBeenCalledOnce();
     expect(handlePaste.mock.calls[0][3]).toBe(firstImage);
+    expect(Notice.instances).toHaveLength(1);
+    expect(Notice.instances[0].message).toContain('Automatic processing resumes with the next image');
 
     await handler({
       defaultPrevented: false,
@@ -194,6 +198,7 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
       preventDefault: vi.fn(),
     }, editor);
     expect(handlePaste.mock.calls[1][3]).toBeUndefined();
+    expect(Notice.instances).toHaveLength(1);
   });
 
   it('keeps one-shot skip armed after unsupported and never-process image pastes', async () => {
@@ -271,6 +276,56 @@ describe('editor-drop/editor-paste defaultPrevented guard', () => {
     expect(drop.preventDefault).not.toHaveBeenCalled();
     expect(handlePaste).not.toHaveBeenCalled();
     expect(handleDrop).not.toHaveBeenCalled();
+    expect(Notice.instances.map(notice => notice.message)).toEqual([
+      'Automatic image processing is paused. Images will be added without compression.',
+      'Automatic image processing is paused. Images will be added without compression.',
+    ]);
+  });
+
+  it('does not show paused notices for text or unsupported imports', async () => {
+    const { app, plugin } = makePluginForDropPaste();
+    (plugin as any).settings.autoImageProcessingPaused = true;
+    (plugin as any).supportedImageFormats.isSupported = vi.fn(() => false);
+    (plugin as any).dropPasteRegisterEvents();
+    const paste = getRegisteredWorkspaceHandler(app, 'editor-paste');
+    const drop = getRegisteredWorkspaceHandler(app, 'editor-drop');
+    const preventDefault = vi.fn();
+    await paste({ defaultPrevented: false, clipboardData: { items: [{ kind: 'string', type: 'text/plain' }] }, preventDefault }, {});
+    await paste({ defaultPrevented: false, clipboardData: { items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => new File(['pdf'], 'test.pdf') }] }, preventDefault }, {});
+    await drop({ defaultPrevented: false, dataTransfer: { files: [new File(['pdf'], 'test.pdf')] }, preventDefault }, {});
+    expect(Notice.instances).toHaveLength(0);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('explicit pause and resume commands persist their state without toggling on repeated calls', async () => {
+    const { app } = makeAppWithNote();
+    const plugin = new ImageConverterPlugin(app as any, fakePluginManifest({ id: 'image-converter' }));
+    let savedData: any;
+    const savedStates: boolean[] = [];
+    vi.spyOn(plugin as any, 'loadData').mockResolvedValue(undefined);
+    vi.spyOn(plugin as any, 'saveData').mockImplementation(async (data: any) => {
+      savedData = structuredClone(data);
+      savedStates.push(data.autoImageProcessingPaused);
+    });
+    const commands: any[] = [];
+    (plugin as any).addCommand = vi.fn((command: any) => commands.push(command));
+    await plugin.onload();
+    savedStates.length = 0;
+    const pause = commands.find(command => command.id === 'pause-auto-image-processing');
+    const resume = commands.find(command => command.id === 'resume-auto-image-processing');
+    expect(pause).toBeTruthy();
+    expect(resume).toBeTruthy();
+    for (const [command, expected] of [[pause, true], [pause, true], [resume, false], [resume, false]] as const) {
+      await command.callback();
+      expect(plugin.settings.autoImageProcessingPaused).toBe(expected);
+      expect(savedData.autoImageProcessingPaused).toBe(expected);
+    }
+    expect(savedStates).toEqual([true, true, false, false]);
+
+    const reloadedPlugin = new ImageConverterPlugin(app as any, fakePluginManifest({ id: 'image-converter' }));
+    vi.spyOn(reloadedPlugin as any, 'loadData').mockImplementation(async () => savedData);
+    await reloadedPlugin.loadSettings();
+    expect(reloadedPlugin.settings.autoImageProcessingPaused).toBe(false);
   });
 
   it('persists the automatic processing toggle across settings reloads', async () => {
