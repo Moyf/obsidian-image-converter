@@ -71,7 +71,7 @@ const buildConfig = {
 	// Production optimizations
 	drop: prod ? ["debugger"] : [],
 
-	outfile: "build/main.js",
+	outfile: "dist/main.js",
 	platform: "node",
 	tsconfig: "tsconfig.json", // Make esbuild pick up paths and TS settings consistently
 
@@ -86,18 +86,18 @@ const buildConfig = {
 // Helper function to copy files to build
 async function copyToBuild() {
 	// Ensure build directory exists
-	if (!fs.existsSync('build')) {
-		fs.mkdirSync('build');
+	if (!fs.existsSync('dist')) {
+		fs.mkdirSync('dist');
 	}
 	
 	// Copy manifest.json
 	if (fs.existsSync('manifest.json')) {
-		fs.copyFileSync('manifest.json', 'build/manifest.json');
+		fs.copyFileSync('manifest.json', 'dist/manifest.json');
 	}
 	
 	// Copy styles.css if it exists
 	if (fs.existsSync('styles.css')) {
-		fs.copyFileSync('styles.css', 'build/styles.css');
+		fs.copyFileSync('styles.css', 'dist/styles.css');
 	}
 }
 
@@ -117,7 +117,7 @@ if (prod) {
 		
 		// Meta file generation removed as per user request
 		
-		console.log("✅ Production build completed in build/\n");
+		console.log("✅ Production build completed in dist/\n");
 		
 		await context.dispose();
 		process.exit(0);
@@ -139,7 +139,7 @@ if (prod) {
 		console.log("📌 Version:    " + packageJson.version);
 		console.log("🎯 Target:     " + tsTarget.toUpperCase());
 		console.log("📁 Entry:      ./src/main.ts");
-		console.log("📤 Output:     ./build/");
+		console.log("📤 Output:     ./dist/");
 		console.log("\n👀 Watching for changes... (Ctrl+C to stop)\n");
 		
 		// Handle graceful shutdown
