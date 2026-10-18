@@ -17,6 +17,8 @@ import { ToolPreset } from "./ImageAnnotation";
 import { SingleImageModalSettings } from './ProcessSingleImageModal';
 import { findFfmpegExecutablePath, normalizeExecutablePath } from "./utils/ffmpegPath";
 import { addInfoIcon } from "./utils/settingInfo";
+import type { FolderPresetRule } from './FolderPresetRules';
+import { renderFolderPresetRules } from './FolderPresetRulesSettings';
 
 import Sortable from "sortablejs";
 
@@ -120,6 +122,7 @@ export interface GlobalPreset {
 
 // Interface for settings
 export interface ImageConverterSettings {
+    folderPresetRules?: FolderPresetRule[];
     folderPresets: FolderPreset[];
     selectedFolderPreset: string;
     filenamePresets: FilenamePreset[];
@@ -237,6 +240,7 @@ export interface ImageConverterSettings {
 // --- Default Settings ---
 
 export const DEFAULT_SETTINGS: ImageConverterSettings = {
+    folderPresetRules: [],
     folderPresets: [
         { type: "DEFAULT", name: "Default (Obsidian setting)" },
         { type: "ROOT", name: "Root folder" },
@@ -507,6 +511,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         }
 
         this.renderGlobalPresetSelector();
+        renderFolderPresetRules(containerEl, this.plugin);
 
         // No need to check or update isFormExpanded here
         this.renderTabs();

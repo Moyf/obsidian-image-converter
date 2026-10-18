@@ -39,6 +39,7 @@ import {
 
 import { PresetSelectionModal } from "./PresetSelectionModal";
 import { ImageProcessingPauseState } from "./ImageProcessingPauseState";
+import { resolveSettingsForNote } from './FolderPresetRules';
 
 export default class ImageConverterPlugin extends Plugin {
     settings!: ImageConverterSettings;
@@ -519,7 +520,7 @@ export default class ImageConverterPlugin extends Plugin {
 
         // Drop event (Obsidian editor - primary handlers)
         this.registerEvent(
-            this.app.workspace.on("editor-drop", async (evt: DragEvent, editor: Editor) => {
+            this.app.workspace.on("editor-drop", async (evt: DragEvent, editor: Editor, info?: { file: TFile | null }) => {
                 if (evt.defaultPrevented) return;
                 if (this.settings.autoImageProcessingPaused) return;
 
@@ -551,14 +552,14 @@ export default class ImageConverterPlugin extends Plugin {
                     evt.preventDefault(); // Prevent default behavior
 
                     // We don't need setTimeout anymore since we're using the drop position
-                    await this.handleDrop(fileData, editor, evt, pos);
+                    await this.handleDrop(fileData, editor, evt, pos, info?.file ?? undefined);
                 }
             })
         );
 
         // --- Paste event handler ---
         this.registerEvent(
-            this.app.workspace.on("editor-paste", async (evt: ClipboardEvent, editor: Editor) => {
+            this.app.workspace.on("editor-paste", async (evt: ClipboardEvent, editor: Editor, info?: { file: TFile | null }) => {
                 if (evt.defaultPrevented) return;
                 if (this.settings.autoImageProcessingPaused) return;
 
@@ -593,13 +594,13 @@ export default class ImageConverterPlugin extends Plugin {
                         )?.file ?? undefined
                         : undefined;
                     evt.preventDefault();
-                    await this.handlePaste(itemData, editor, cursor, passthroughFile);
+                    await this.handlePaste(itemData, editor, cursor, passthroughFile, info?.file ?? undefined);
                 }
             })
         );
     }
 
-    private async handleDrop(fileData: { name: string; type: string; file: File }[], editor: Editor, evt: DragEvent, cursor: EditorPosition) {
+    private async handleDrop(fileData: { name: string; type: string; file: File }[], editor: Editor, evt: DragEvent, cursor: EditorPosition, sourceFile?: TFile) {
 
         // Step 1: Filter Supported Files
         // - Filter the incoming `fileData` to keep only the files that are supported by the plugin (using `isSupported`).
@@ -614,11 +615,12 @@ export default class ImageConverterPlugin extends Plugin {
         // - Return early if no supported files are found or if there's no active file in the Obsidian workspace.
         if (supportedFiles.length === 0) return;
 
-        const activeFile = this.app.workspace.getActiveFile();
+        const activeFile = sourceFile ?? this.app.workspace.getActiveFile();
         if (!activeFile) {
             new Notice('No active file detected');
             return;
         }
+        const importSettings = resolveSettingsForNote(this.settings, activeFile.path);
 
         // Step 3: Map Files to Processing Promises
         // - Create an array of promises, each responsible for processing one file.
@@ -626,7 +628,7 @@ export default class ImageConverterPlugin extends Plugin {
         const filePromises = supportedFiles.map(async (file) => {
             try {
                 // Check modal behavior setting
-                const { modalBehavior } = this.settings;
+                const { modalBehavior } = importSettings;
                 let showModal = modalBehavior === "always";
 
                 if (modalBehavior === "ask") {
@@ -664,7 +666,7 @@ export default class ImageConverterPlugin extends Plugin {
                     }>((resolve) => {
                         new PresetSelectionModal(
                             this.app,
-                            this.settings,
+                            importSettings,
                             (conversionPreset, filenamePreset, folderPreset, linkFormatPreset, resizePreset) => {
                                 resolve({
                                     selectedConversionPreset: conversionPreset,
@@ -681,32 +683,32 @@ export default class ImageConverterPlugin extends Plugin {
                 } else {
                     // Use default presets from settings using the generic getter
                     selectedConversionPreset = this.getPresetByName(
-                        this.settings.selectedConversionPreset,
-                        this.settings.conversionPresets,
+                        importSettings.selectedConversionPreset,
+                        importSettings.conversionPresets,
                         'Conversion'
                     );
 
                     selectedFilenamePreset = this.getPresetByName(
-                        this.settings.selectedFilenamePreset,
-                        this.settings.filenamePresets,
+                        importSettings.selectedFilenamePreset,
+                        importSettings.filenamePresets,
                         'Filename'
                     );
 
                     selectedFolderPreset = this.getPresetByName(
-                        this.settings.selectedFolderPreset,
-                        this.settings.folderPresets,
+                        importSettings.selectedFolderPreset,
+                        importSettings.folderPresets,
                         'Folder'
                     );
 
                     selectedLinkFormatPreset = this.getPresetByName(
-                        this.settings.linkFormatSettings.selectedLinkFormatPreset,
-                        this.settings.linkFormatSettings.linkFormatPresets,
+                        importSettings.linkFormatSettings.selectedLinkFormatPreset,
+                        importSettings.linkFormatSettings.linkFormatPresets,
                         'Link Format'
                     );
 
                     selectedResizePreset = this.getPresetByName(
-                        this.settings.nonDestructiveResizeSettings.selectedResizePreset,
-                        this.settings.nonDestructiveResizeSettings.resizePresets,
+                        importSettings.nonDestructiveResizeSettings.selectedResizePreset,
+                        importSettings.nonDestructiveResizeSettings.resizePresets,
                         'Resize'
                     );
                 }
@@ -787,7 +789,7 @@ export default class ImageConverterPlugin extends Plugin {
                     // - If a file exists and the preset is set to "reuse," insert a link to the existing file and skip processing.
                     if (existingFile && selectedFilenamePreset && selectedFilenamePreset.conflictResolution === "reuse") {
                         try {
-                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for reused file:", errorMessage);
@@ -812,7 +814,7 @@ export default class ImageConverterPlugin extends Plugin {
 
                         // Insert a link to the newly created (but unprocessed) file.
                         try {
-                            await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for skipped conversion:", errorMessage);
@@ -828,33 +830,33 @@ export default class ImageConverterPlugin extends Plugin {
                                 file,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.outputFormat
-                                    : this.settings.outputFormat,
+                                    : importSettings.outputFormat,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.quality / 100
-                                    : this.settings.quality / 100,
+                                    : importSettings.quality / 100,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.colorDepth
-                                    : this.settings.colorDepth,
+                                    : importSettings.colorDepth,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.resizeMode
-                                    : this.settings.resizeMode,
+                                    : importSettings.resizeMode,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredWidth
-                                    : this.settings.desiredWidth,
+                                    : importSettings.desiredWidth,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredHeight
-                                    : this.settings.desiredHeight,
+                                    : importSettings.desiredHeight,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredLongestEdge
-                                    : this.settings.desiredLongestEdge,
+                                    : importSettings.desiredLongestEdge,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.enlargeOrReduce
-                                    : this.settings.enlargeOrReduce,
+                                    : importSettings.enlargeOrReduce,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.allowLargerFiles
-                                    : this.settings.allowLargerFiles,
+                                    : importSettings.allowLargerFiles,
                                 selectedConversionPreset, // Pass preset to ImageProcessor
-                                this.settings
+                                importSettings
                             );
 
 
@@ -864,12 +866,12 @@ export default class ImageConverterPlugin extends Plugin {
                             // - Create the new image file in the Obsidian vault using `createBinary`.
                             // Show space savings notification
                             // Check if processed image is larger than original + minimum savings
-                            const minSavingsKB = (typeof (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB) === 'number'
-                                && (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB) >= 0)
-                                ? (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB)
+                            const minSavingsKB = (typeof (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB) === 'number'
+                                && (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB) >= 0)
+                                ? (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB)
                                 : 30;
                             const shouldRevertIfLarger = selectedConversionPreset?.revertToOriginalIfLarger
-                                ?? this.settings.revertToOriginalIfLarger;
+                                ?? importSettings.revertToOriginalIfLarger;
 
                             if (shouldRevertIfLarger && this.processedImage.byteLength + (minSavingsKB * 1024) > originalSize) {
                                 // User wants to revert AND processed image is larger
@@ -887,7 +889,7 @@ export default class ImageConverterPlugin extends Plugin {
                             // Step 3.5.5: Insert Link into Editor
                             // - Insert the Markdown link to the newly created image file into the editor at the current cursor position.
                             try {
-                                await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                                await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                             } catch (error) {
                                 const errorMessage = error instanceof Error ? error.message : String(error);
                                 console.error("Failed to insert link after processing:", errorMessage);
@@ -920,7 +922,7 @@ export default class ImageConverterPlugin extends Plugin {
                     // - If further processing is skipped due to filename conflict resolution, insert a link to an existing file (if applicable).
                     if (existingFile) {
                         try {
-                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for skipped processing:", errorMessage);
@@ -941,12 +943,12 @@ export default class ImageConverterPlugin extends Plugin {
         // - Use `Promise.all` to wait for all the file processing promises to settle (either fulfilled or rejected).
         await Promise.all(filePromises);
         
-        if (this.settings.enableImageCaptions) {
+        if (importSettings.enableImageCaptions) {
             this.captionManager?.refresh();
         }
     }
 
-    private async handlePaste(itemData: { kind: string; type: string; file: File | null }[], editor: Editor, cursor: EditorPosition, passthroughFile?: File) {
+    private async handlePaste(itemData: { kind: string; type: string; file: File | null }[], editor: Editor, cursor: EditorPosition, passthroughFile?: File, sourceFile?: TFile) {
         // Step 1: Filter Supported Image Files
         // - Filter the pasted `itemData` to keep only supported image files.
         const supportedFiles = itemData
@@ -959,18 +961,19 @@ export default class ImageConverterPlugin extends Plugin {
         // - Return early if no supported files are found or if there's no active file.
         if (supportedFiles.length === 0) return;
 
-        const activeFile = this.app.workspace.getActiveFile();
+        const activeFile = sourceFile ?? this.app.workspace.getActiveFile();
         if (!activeFile) {
             new Notice('No active file detected');
             return;
         }
+        const importSettings = resolveSettingsForNote(this.settings, activeFile.path);
 
         // Step 3: Map Files to Processing Promises
         // - Create an array of promises, each responsible for processing one pasted file.
         const filePromises = supportedFiles.map(async (file) => {
             const passThroughUnprocessed = file === passthroughFile;
             // Check modal behavior setting
-            const { modalBehavior } = this.settings;
+            const { modalBehavior } = importSettings;
             let showModal = !passThroughUnprocessed && modalBehavior === "always";
 
             if (!passThroughUnprocessed && modalBehavior === "ask") {
@@ -1008,7 +1011,7 @@ export default class ImageConverterPlugin extends Plugin {
                 }>((resolve) => {
                     new PresetSelectionModal(
                         this.app,
-                        this.settings,
+                        importSettings,
                         (conversionPreset, filenamePreset, folderPreset, linkFormatPreset, resizePreset) => {
                             resolve({
                                 selectedConversionPreset: conversionPreset,
@@ -1025,32 +1028,32 @@ export default class ImageConverterPlugin extends Plugin {
             } else {
                 // Use default presets from settings using the generic getter
                 selectedConversionPreset = this.getPresetByName(
-                    this.settings.selectedConversionPreset,
-                    this.settings.conversionPresets,
+                    importSettings.selectedConversionPreset,
+                    importSettings.conversionPresets,
                     'Conversion'
                 );
 
                 selectedFilenamePreset = this.getPresetByName(
-                    this.settings.selectedFilenamePreset,
-                    this.settings.filenamePresets,
+                    importSettings.selectedFilenamePreset,
+                    importSettings.filenamePresets,
                     'Filename'
                 );
 
                 selectedFolderPreset = this.getPresetByName(
-                    this.settings.selectedFolderPreset,
-                    this.settings.folderPresets,
+                    importSettings.selectedFolderPreset,
+                    importSettings.folderPresets,
                     'Folder'
                 );
 
                 selectedLinkFormatPreset = this.getPresetByName(
-                    this.settings.linkFormatSettings.selectedLinkFormatPreset,
-                    this.settings.linkFormatSettings.linkFormatPresets,
+                    importSettings.linkFormatSettings.selectedLinkFormatPreset,
+                    importSettings.linkFormatSettings.linkFormatPresets,
                     'Link Format'
                 );
 
                 selectedResizePreset = this.getPresetByName(
-                    this.settings.nonDestructiveResizeSettings.selectedResizePreset,
-                    this.settings.nonDestructiveResizeSettings.resizePresets,
+                    importSettings.nonDestructiveResizeSettings.selectedResizePreset,
+                    importSettings.nonDestructiveResizeSettings.resizePresets,
                     'Resize'
                 );
             }
@@ -1144,7 +1147,7 @@ export default class ImageConverterPlugin extends Plugin {
                     // - If the file exists and the preset is set to "reuse," insert a link to the existing file.
                     if (existingFile && selectedFilenamePreset && selectedFilenamePreset.conflictResolution === "reuse") {
                         try {
-                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for reused file:", errorMessage);
@@ -1169,7 +1172,7 @@ export default class ImageConverterPlugin extends Plugin {
 
                         // Insert a link to the newly created (unprocessed) file.
                         try {
-                            await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for skipped conversion:", errorMessage);
@@ -1184,33 +1187,33 @@ export default class ImageConverterPlugin extends Plugin {
                                 file,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.outputFormat
-                                    : this.settings.outputFormat,
+                                    : importSettings.outputFormat,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.quality / 100
-                                    : this.settings.quality / 100,
+                                    : importSettings.quality / 100,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.colorDepth
-                                    : this.settings.colorDepth,
+                                    : importSettings.colorDepth,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.resizeMode
-                                    : this.settings.resizeMode,
+                                    : importSettings.resizeMode,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredWidth
-                                    : this.settings.desiredWidth,
+                                    : importSettings.desiredWidth,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredHeight
-                                    : this.settings.desiredHeight,
+                                    : importSettings.desiredHeight,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.desiredLongestEdge
-                                    : this.settings.desiredLongestEdge,
+                                    : importSettings.desiredLongestEdge,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.enlargeOrReduce
-                                    : this.settings.enlargeOrReduce,
+                                    : importSettings.enlargeOrReduce,
                                 selectedConversionPreset
                                     ? selectedConversionPreset.allowLargerFiles
-                                    : this.settings.allowLargerFiles,
+                                    : importSettings.allowLargerFiles,
                                 selectedConversionPreset, // Pass preset to ImageProcessor
-                                this.settings
+                                importSettings
                             );
 
                             let tfile: TFile;
@@ -1218,12 +1221,12 @@ export default class ImageConverterPlugin extends Plugin {
                             // - Create the new image file in the Obsidian vault using `createBinary`.
                             // - Show space savings notification
                             // Check if processed image is larger than original + minimum savings
-                            const minSavingsKB = (typeof (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB) === 'number'
-                                && (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB) >= 0)
-                                ? (selectedConversionPreset?.minimumCompressionSavingsInKB ?? this.settings.minimumCompressionSavingsInKB)
+                            const minSavingsKB = (typeof (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB) === 'number'
+                                && (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB) >= 0)
+                                ? (selectedConversionPreset?.minimumCompressionSavingsInKB ?? importSettings.minimumCompressionSavingsInKB)
                                 : 30;
                             const shouldRevertIfLarger = selectedConversionPreset?.revertToOriginalIfLarger
-                                ?? this.settings.revertToOriginalIfLarger;
+                                ?? importSettings.revertToOriginalIfLarger;
 
                             if (shouldRevertIfLarger && this.processedImage.byteLength + (minSavingsKB * 1024) > originalSize) {
                                 // User wants to revert AND processed image is larger
@@ -1241,7 +1244,7 @@ export default class ImageConverterPlugin extends Plugin {
                             // Step 3.5.5: Insert Link into Editor
                             // - Insert the link to the new image into the editor.
                             try {
-                                await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                                await this.insertLinkAtCursorPosition(editor, tfile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                             } catch (error) {
                                 const errorMessage = error instanceof Error ? error.message : String(error);
                                 console.error("Failed to insert link after processing:", errorMessage);
@@ -1271,7 +1274,7 @@ export default class ImageConverterPlugin extends Plugin {
                     // - If skipping, insert a link to an existing file or do nothing.
                     if (existingFile) {
                         try {
-                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset);
+                            await this.insertLinkAtCursorPosition(editor, existingFile.path, cursor, selectedLinkFormatPreset, selectedResizePreset, activeFile);
                         } catch (error) {
                             const errorMessage = error instanceof Error ? error.message : String(error);
                             console.error("Failed to insert link for skipped processing:", errorMessage);
@@ -1294,7 +1297,7 @@ export default class ImageConverterPlugin extends Plugin {
         // - Wait for all file processing promises to settle.
         await Promise.all(filePromises);
 
-        if (this.settings.enableImageCaptions) {
+        if (importSettings.enableImageCaptions) {
             this.captionManager?.refresh();
         }
     }
@@ -1305,9 +1308,10 @@ export default class ImageConverterPlugin extends Plugin {
         linkPath: string,
         cursor: EditorPosition,
         selectedLinkFormatPreset?: LinkFormatPreset,
-        selectedResizePreset?: NonDestructiveResizePreset
+        selectedResizePreset?: NonDestructiveResizePreset,
+        sourceFile?: TFile
     ) {
-        const activeFile = this.app.workspace.getActiveFile();
+        const activeFile = sourceFile ?? this.app.workspace.getActiveFile();
 
         // Use the passed presets or fall back to the plugin settings
         const linkFormatPresetToUse = selectedLinkFormatPreset || this.settings.linkFormatSettings.linkFormatPresets.find(

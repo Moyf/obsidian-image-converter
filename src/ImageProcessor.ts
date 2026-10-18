@@ -6,6 +6,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { ConversionPreset, ImageConverterSettings, DEFAULT_SETTINGS } from "./ImageConverterSettings";
 import * as piexif from "piexifjs"; // Import piexif library
 import { normalizeExecutablePath } from "./utils/ffmpegPath";
+import { AsyncLock } from './AsyncLock';
 
 // eslint-disable-next-line import/no-nodejs-modules -- Required for temporary file handling in FFmpeg processing; Obsidian runs on Electron with Node.js support
 import * as fs from 'fs/promises';
@@ -72,6 +73,7 @@ export const ENCODER_CONFIGS: Record<AvifEncoder, EncoderConfig> = {
 /* eslint-enable @typescript-eslint/naming-convention */
 
 export class ImageProcessor {
+    private processingLock = new AsyncLock();
 
     supportedImageFormats: SupportedImageFormats
     private preset: ConversionPreset | undefined;
@@ -482,8 +484,9 @@ export class ImageProcessor {
         preset?: ConversionPreset, // Add preset parameter
         settings?: ImageConverterSettings
     ): Promise<ArrayBuffer> {
-        // Process the image using the helper function
-        const processedImage = await this.processImageHelper(
+        // Encoder configuration is held on this instance. Keep it stable across
+        // every await, including external encoders, before admitting the next image.
+        const processedImage = await this.processingLock.acquire('conversion', () => this.processImageHelper(
             file,
             format,
             quality,
@@ -496,7 +499,7 @@ export class ImageProcessor {
             allowLargerFiles,
             preset,
             settings
-        );
+        ));
 
         if (format === "JPEG") {
             try {
