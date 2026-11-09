@@ -711,18 +711,28 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         const containerEl = this.getPresetContainerEl();
 
         const globalPresetContainer = containerEl.createDiv("image-converter-global-preset-container");
+        const headerEl = globalPresetContainer.createDiv("image-converter-global-preset-header");
+        const controlsEl = globalPresetContainer.createDiv("image-converter-global-preset-controls");
 
         // --- Click to Toggle Visibility ---
         // Create a clickable element for toggling visibility
-        const toggleVisibilityEl = globalPresetContainer.createDiv("image-converter-global-preset-toggle");
+        const toggleVisibilityEl = headerEl.createEl("button", {
+            cls: "image-converter-global-preset-toggle",
+            attr: { type: "button" },
+        });
+        toggleVisibilityEl.setAttribute("aria-expanded", String(this.presetUIState.globalPresetVisible));
 
         // Add a chevron icon
         const chevronIcon = toggleVisibilityEl.createEl("i");
-        setIcon(chevronIcon, "chevron-down"); // Initial state (expanded)
+        setIcon(chevronIcon, this.presetUIState.globalPresetVisible ? "chevron-down" : "chevron-right");
         chevronIcon.addClass("image-converter-chevron-icon");
 
         // Add a label that changes based on visibility
-        const toggleLabel = toggleVisibilityEl.createEl("span", { text: "Drop/paste presets", cls: "settings-section-title" });
+        const toggleLabel = toggleVisibilityEl.createSpan({ text: "Drop/paste presets", cls: "settings-section-title" });
+        headerEl.createDiv({
+            cls: "image-converter-global-preset-description",
+            text: "Quickly apply a combination of presets",
+        });
 
         // Add click handler to toggle visibility specifically to the toggle element
         toggleVisibilityEl.onClickEvent((event: MouseEvent) => {
@@ -745,10 +755,10 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         });
 
         // --- Dropdown ---
-        new Setting(globalPresetContainer)
-            // .setName("Drop/paste presets")
-            .setDesc("Quickly apply a combination of presets")
+        new Setting(controlsEl)
+            .setClass("image-converter-global-preset-select")
             .addDropdown((dropdown) => {
+                dropdown.selectEl.setAttribute("aria-label", "Global preset");
                 dropdown.addOption("", "None");
                 this.plugin.settings.globalPresets.forEach((preset) => {
                     dropdown.addOption(preset.name, preset.name);
@@ -778,7 +788,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
             });
 
         // "Save as New Preset" button
-        new ButtonComponent(globalPresetContainer)
+        new ButtonComponent(controlsEl)
             .setIcon("plus")
     .setTooltip("Save current selection as a new global preset")
             .onClick((event: MouseEvent) => {
@@ -802,7 +812,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
         // "Delete" button (only visible when a global preset is selected)
         if (this.plugin.settings.selectedGlobalPreset) {
-            new ButtonComponent(globalPresetContainer)
+            new ButtonComponent(controlsEl)
                 .setIcon("trash")
                 .setClass("danger")
     .setTooltip("Delete selected global preset")
@@ -1394,6 +1404,8 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         if (!tabContainer) {
             tabContainer = containerEl.createDiv("image-converter-setting-tabs");
         }
+        tabContainer.setAttribute("role", "tablist");
+        tabContainer.setAttribute("aria-label", "Image import preset categories");
         // Only add tabs if they haven't been already
         if (tabContainer.children.length === 0) {
             // Correct the type of the first argument
@@ -1406,11 +1418,15 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
         // Highlight active tab 
         const tabs = tabContainer.querySelectorAll(".image-converter-tab");
-        tabs.forEach((tab) => tab.removeClass("image-converter-tab-active"));
+        tabs.forEach((tab) => {
+            tab.removeClass("image-converter-tab-active");
+            tab.setAttribute("aria-selected", "false");
+        });
 
         const activeTab = tabContainer.querySelector(`.image-converter-tab-${this.activeTab}`);
         if (activeTab) {
             activeTab.addClass("image-converter-tab-active");
+            activeTab.setAttribute("aria-selected", "true");
         }
 
     }
@@ -1422,7 +1438,10 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         if (!tabContainer) {
             tabContainer = containerEl.createDiv("image-converter-setting-tabs");
         }
-        const tab = tabContainer.createDiv(`image-converter-tab image-converter-tab-${tabId}`);
+        const tab = tabContainer.createEl("button", {
+            cls: `image-converter-tab image-converter-tab-${tabId}`,
+            attr: { type: "button", role: "tab" },
+        });
         setIcon(tab, icon);
         tab.createSpan({ text: label, cls: "image-converter-tab-label" });
         tab.onclick = () => {

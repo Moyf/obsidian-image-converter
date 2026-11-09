@@ -621,6 +621,22 @@ describe('Settings defaults, global preset application, and field constraints (1
     expect(plugin.settings.nonDestructiveResizeSettings.selectedResizePreset).toBe(DEFAULT_SETTINGS.nonDestructiveResizeSettings.selectedResizePreset);
   });
 
+  it('separates the preset heading from its controls and exposes full category labels', () => {
+    tab.display();
+    const panel = tab.containerEl.querySelector('.image-converter-global-preset-container')!;
+    const header = panel.querySelector('.image-converter-global-preset-header')!;
+    const controls = panel.querySelector('.image-converter-global-preset-controls')!;
+    expect(header.querySelector('select')).toBeNull();
+    expect(header.querySelector('.image-converter-global-preset-description')?.textContent).toBe('Quickly apply a combination of presets');
+    expect(controls.querySelector('[aria-label="Global preset"]')).toBeTruthy();
+    const toggle = header.querySelector<HTMLButtonElement>('button')!;
+    expect(toggle.type).toBe('button');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const labels = Array.from(tab.containerEl.querySelectorAll('[role="tab"]')).map(item => item.textContent);
+    expect(labels).toEqual(['Folder', 'Filename', 'Conversion', 'Link format', 'Resize']);
+    expect(tab.containerEl.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Folder');
+  });
+
   it('11.10 Filename preset cards show stored preset names and the template in the summary', async () => {
     tab.activeTab = 'filename';
     tab.display();
