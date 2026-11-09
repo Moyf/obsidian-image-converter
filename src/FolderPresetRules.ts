@@ -6,14 +6,24 @@ export interface FolderPresetRule {
     enabled: boolean;
 }
 
-/** A blank field is incomplete; use / explicitly to match the vault root. */
+export const EXTERNAL_FILES_PATH = 'file:';
+
+/** Use / for vault notes and file: for external notes; a blank field is incomplete. */
 export function normalizeRuleFolderPath(value: string): string | null {
     const path = value.trim().replace(/\\/g, '/');
+    if (path === EXTERNAL_FILES_PATH) return EXTERNAL_FILES_PATH;
     if (!path || /[:\0]/.test(path)) return null;
     if (path === '/' || path === '.') return '';
     const parts = path.split('/').filter(Boolean);
     if (parts.some(part => part === '.' || part === '..')) return null;
     return parts.join('/');
+}
+
+/** Vault folder rules never apply to notes opened through the file: scheme. */
+function matchesRuleFolder(path: string, folder: string, external: boolean): boolean {
+    if (path === EXTERNAL_FILES_PATH) return external;
+    if (external) return false;
+    return !path || folder === path || folder.startsWith(`${path}/`);
 }
 
 /** Resolve a per-import snapshot without changing the global selection or presets. */
@@ -22,13 +32,14 @@ export function resolveSettingsForNote(
     notePath: string
 ): ImageConverterSettings {
     if (!settings.folderPresetRules?.length) return settings;
+    const external = notePath.startsWith(EXTERNAL_FILES_PATH);
     const folder = notePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
     let match: FolderPresetRule | undefined;
     let matchLength = -1;
     for (const rule of settings.folderPresetRules ?? []) {
         if (!rule?.enabled || typeof rule.folderPath !== 'string') continue;
         const path = normalizeRuleFolderPath(rule.folderPath);
-        if (path === null || (path && folder !== path && !folder.startsWith(`${path}/`))) continue;
+        if (path === null || !matchesRuleFolder(path, folder, external)) continue;
         if (!settings.globalPresets.some(preset => preset.name === rule.globalPreset)) continue;
         if (path.length > matchLength) {
             match = rule;

@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ImageConverterPlugin from '../../../src/main';
 import { AvailableVariablesModal, ImageConverterSettingTab, DEFAULT_SETTINGS, type ConversionPreset, type FilenamePreset } from '../../../src/ImageConverterSettings';
 import type { LinkFormatPreset } from '../../../src/LinkFormatSettings';
-import { App, Notice, Platform } from 'obsidian';
+import { App, Notice, Platform, Setting, requireApiVersion } from 'obsidian';
+import * as ObsidianModule from 'obsidian';
 import { crossPlatformPathPattern } from '../../helpers/test-setup';
 
 // Mock SortableJS to capture onEnd callbacks for reorder (11.9)
@@ -394,6 +395,55 @@ describe('Settings defaults, global preset application, and field constraints (1
     expect(tab.containerEl.querySelectorAll('.image-converter-preset-form')).toHaveLength(1);
     expect(tab.formContainer.querySelector<HTMLInputElement>('input')?.value).toBe('Card A');
     expect(tab.formContainer.querySelector('.image-converter-form-buttons button.cta')?.textContent).toBe('Save');
+  });
+
+  it('groups image behavior below presets and keeps folder rules behind a subpage', () => {
+    tab.display();
+    const group = tab.containerEl.querySelector('.image-converter-image-behavior-group')!;
+    expect(group.querySelector('.image-alignment-settings-section')).toBeTruthy();
+    expect(group.querySelector('.image-drag-resize-settings-section')).toBeTruthy();
+    expect(group.querySelector('.image-caption-settings-section')).toBeTruthy();
+    expect(group.textContent).toContain('Right-click menu');
+    expect(group.textContent).toContain('Folder-based presets');
+    expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeNull();
+    const configure = Array.from(group.querySelectorAll('button')).find(button => button.textContent === 'Configure')!;
+    configure.click();
+    expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeTruthy();
+    expect(tab.containerEl.querySelector('.image-converter-setting-tabs')).toBeNull();
+    Array.from(tab.containerEl.querySelectorAll('button')).find(button => button.textContent === 'Back')!.click();
+    expect(tab.containerEl.querySelector('.image-converter-setting-tabs')).toBeTruthy();
+    expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeNull();
+  });
+
+  it('exposes the native group and page and refreshes native definitions on preset changes', () => {
+    vi.spyOn(ObsidianModule, 'requireApiVersion').mockReturnValue(true);
+    const definitions = tab.getSettingDefinitions();
+    const group = definitions.find(item => 'type' in item && item.type === 'group');
+    expect(group && 'items' in group && group.items?.some(item => 'type' in item && item.type === 'page' && item.name === 'Folder-based presets')).toBe(true);
+    const presetSetting = new Setting(tab.containerEl);
+    const presetDefinition = definitions[0];
+    if ('render' in presetDefinition && presetDefinition.render) {
+      presetDefinition.render(presetSetting, undefined as any);
+    }
+    const update = vi.spyOn(tab, 'update');
+    const display = vi.spyOn(tab, 'display');
+    (presetSetting.settingEl.querySelector('.image-converter-tab-filename') as HTMLElement).click();
+    expect(tab.activeTab).toBe('filename');
+    expect(update).toHaveBeenCalledOnce();
+    expect(display).not.toHaveBeenCalled();
+    expect(requireApiVersion('1.13.0')).toBe(true);
+  });
+
+  it('removes custom section content before the host reuses its setting row', () => {
+    const definition = tab.getSettingDefinitions()[0];
+    const setting = new Setting(tab.containerEl);
+    if (!('render' in definition) || !definition.render) throw new Error('Expected custom preset definition');
+    const cleanup = definition.render(setting, undefined as any);
+    expect(setting.settingEl.querySelectorAll('.image-converter-global-preset-container')).toHaveLength(1);
+    if (typeof cleanup === 'function') cleanup();
+    expect(setting.settingEl.querySelector('.image-converter-section-content')).toBeNull();
+    definition.render(setting, undefined as any);
+    expect(setting.settingEl.querySelectorAll('.image-converter-global-preset-container')).toHaveLength(1);
   });
 
   it('11.11 Auto-detect FFmpeg populates preset and modal settings', async () => {

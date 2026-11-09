@@ -7,7 +7,10 @@ import {
     ButtonComponent,
     setIcon,
     TextComponent,
-    TFile
+    TFile,
+    requireApiVersion,
+    type SettingDefinition,
+    type SettingDefinitionItem
 } from "obsidian";
 import ImageConverterPlugin from "./main";
 import { VariableProcessor } from "./VariableProcessor";
@@ -18,7 +21,14 @@ import { SingleImageModalSettings } from './ProcessSingleImageModal';
 import { findFfmpegExecutablePath, normalizeExecutablePath } from "./utils/ffmpegPath";
 import { addInfoIcon } from "./utils/settingInfo";
 import type { FolderPresetRule } from './FolderPresetRules';
-import { renderFolderPresetRules } from './FolderPresetRulesSettings';
+import {
+    FOLDER_RULES_PAGE_NAME,
+    FOLDER_RULES_PAGE_DESCRIPTION,
+    getFolderPresetRuleDefinitions,
+    renderFolderPresetRules,
+} from './FolderPresetRulesSettings';
+import { getImageImportSettingDefinitions } from './ImageBehaviorSettings';
+import { createSettingsGroup, renderLegacySettingDefinitions } from './utils/settingsGroup';
 
 import Sortable from "sortablejs";
 
@@ -441,7 +451,10 @@ export const DEFAULT_SETTINGS: ImageConverterSettings = {
 // --- Settings Tab Class ---
 
 export class ImageConverterSettingTab extends PluginSettingTab {
+    icon = 'image';
     private cachedFirstMarkdownFile?: TFile;
+    private presetContainerEl?: HTMLElement;
+    private presetSortable?: Sortable;
 
     private getCachedFirstMarkdownFile(): TFile | undefined {
         if (!this.cachedFirstMarkdownFile) {
@@ -498,20 +511,124 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         };
     }
 
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        return [
+            this.customSection('Drop/paste presets', containerEl => this.renderPresetControls(containerEl)),
+            {
+                type: 'group',
+                heading: 'Image behavior',
+                cls: 'image-converter-image-behavior-group',
+                items: [
+                    this.customSection('Image alignment', containerEl => this.renderImageAlignmentSettingsSection(containerEl)),
+                    this.customSection('Drag & scroll resize', containerEl => this.renderImageDragResizeSettingsSection(containerEl)),
+                    this.customSection('Captions', containerEl => this.renderImageCaptionSettingsSection(containerEl)),
+                    {
+                        type: 'page',
+                        name: FOLDER_RULES_PAGE_NAME,
+                        desc: FOLDER_RULES_PAGE_DESCRIPTION,
+                        items: getFolderPresetRuleDefinitions(this.plugin, () => this.refreshSettings()),
+                    },
+                    ...getImageImportSettingDefinitions(this.plugin),
+                ],
+            },
+        ];
+    }
+
+    getControlValue(key: string): unknown {
+        return Reflect.get(this.plugin.settings, key);
+    }
+
+    async setControlValue(key: string, value: unknown): Promise<void> {
+        Reflect.set(this.plugin.settings, key, value);
+        await this.plugin.saveSettings();
+    }
+
+    /** Rebuild definitions on new hosts; display remains the older-host fallback. */
+    private refreshSettings(): void {
+        if (requireApiVersion('1.13.0')) {
+            this.update();
+        } else {
+            this.renderLegacyTab();
+        }
+    }
+
+    private customSection(name: string, render: (containerEl: HTMLElement) => void): SettingDefinition {
+        return {
+            name,
+            render: setting => {
+                this.containerEl.addClass('image-converter-settings-tab');
+                setting.settingEl.addClass('image-converter-custom-section');
+                const contentEl = setting.settingEl.createDiv('image-converter-section-content');
+                render(contentEl);
+                return () => {
+                    if (this.presetContainerEl === contentEl) {
+                        this.presetSortable?.destroy?.();
+                        this.presetSortable = undefined;
+                        this.presetContainerEl = undefined;
+                    }
+                    contentEl.remove();
+                };
+            },
+        };
+    }
+
     display(): void {
+        this.renderLegacyTab();
+    }
+
+    private renderLegacyTab(): void {
         const { containerEl } = this;
+        this.presetSortable?.destroy?.();
+        this.presetSortable = undefined;
+        this.presetContainerEl = undefined;
         containerEl.empty();
         containerEl.addClass("image-converter-settings-tab");
 
+        this.renderPresetControls(containerEl);
+        const behaviorGroup = createSettingsGroup(containerEl, 'Image behavior', 'image-converter-image-behavior-group');
+        this.renderImageAlignmentSettingsSection(behaviorGroup.listEl);
+        this.renderImageDragResizeSettingsSection(behaviorGroup.listEl);
+        this.renderImageCaptionSettingsSection(behaviorGroup.listEl);
+        behaviorGroup.addSetting(setting => {
+            setting.setName(FOLDER_RULES_PAGE_NAME)
+                .setDesc(FOLDER_RULES_PAGE_DESCRIPTION)
+                .addButton(button => button.setButtonText('Configure').onClick(() => this.displayFolderRulesPage()));
+        });
+        renderLegacySettingDefinitions(behaviorGroup, getImageImportSettingDefinitions(this.plugin), this);
+    }
+
+    private displayFolderRulesPage(): void {
+        this.presetSortable?.destroy?.();
+        this.presetSortable = undefined;
+        this.presetContainerEl = undefined;
+        this.containerEl.empty();
+        new Setting(this.containerEl)
+            .setName(FOLDER_RULES_PAGE_NAME)
+            .addButton(button => button.setButtonText('Back').onClick(() => this.renderLegacyTab()));
+        renderFolderPresetRules(this.containerEl, this.plugin);
+    }
+
+    hide(): void {
+        this.presetSortable?.destroy?.();
+        this.presetSortable = undefined;
+        this.presetContainerEl = undefined;
+    }
+
+    private getPresetContainerEl(): HTMLElement {
+        return this.presetContainerEl ?? this.containerEl;
+    }
+
+    private renderPresetControls(containerEl: HTMLElement): void {
+        this.presetContainerEl = containerEl;
+
         // Add or remove the 'global-presets-visible' class based on visibility state
         if (this.presetUIState.globalPresetVisible) {
-            containerEl.addClass("global-presets-visible");
+            this.containerEl.addClass("global-presets-visible");
         } else {
-            containerEl.removeClass("global-presets-visible");
+            this.containerEl.removeClass("global-presets-visible");
         }
 
         this.renderGlobalPresetSelector();
-        renderFolderPresetRules(containerEl, this.plugin);
 
         // No need to check or update isFormExpanded here
         this.renderTabs();
@@ -569,98 +686,17 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         if (this.editingPresetKey && this.formContainer) {
             this.formContainer.addClass("visible");
         }
-
-
-        // --- Image Alignment Settings Section ---
-        this.renderImageAlignmentSettingsSection(containerEl);
-
-
-        // --- Image Drag and scroll resize Section--- 
-        this.renderImageDragResizeSettingsSection(containerEl);
-
-        // --- Image Captions Settings Section ---  // ADDED: Call renderImageCaptionSettingsSection here
-        this.renderImageCaptionSettingsSection(containerEl);
-
-        new Setting(containerEl)
-            .setName("Right-click menu")
-            .then((setting) => addInfoIcon(setting, "Enable to show a right-click context menu."))
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableContextMenu)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableContextMenu = value;
-                        await this.plugin.saveSettings();
-                        if (!value) {
-                            new Notice("Context menu disabled. Reload Obsidian to see changes.", 5000);
-                        } else {
-                            new Notice("Context menu enabled. Reload Obsidian to see changes.", 5000);
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName("Cursor position after drop/paste")
-            .then((setting) => addInfoIcon(setting, "Where to place the cursor after dropping or pasting the image"))
-            .addDropdown((dropdown) => {
-                dropdown
-                    .addOption("front", "At the front of the link")
-                    .addOption("back", "At the back of the link")
-                    .setValue(this.plugin.settings.dropPasteCursorLocation)
-                    .onChange(async (value: "front" | "back") => {
-                        this.plugin.settings.dropPasteCursorLocation = value;
-                        await this.plugin.saveSettings();
-                    });
-            });
-
-
-        new Setting(containerEl)
-            .setName("Never process these filenames")
-            .then((setting) => addInfoIcon(setting, "A comma-separated list of file names or patterns that the plugin should never process. Supports glob (*) and regex (enclosed in `/` or `r/` or `regex:`). E.g., `old.png, /^_/, r/temp-.*\\.jpg$/` . Or simply skip all cat images e.g.: /cat/ or all gif images *.gif"))
-            .addTextArea((text) => {
-                text.setValue(this.plugin.settings.neverProcessFilenames)
-                    .onChange(async (value) => {
-                        this.plugin.settings.neverProcessFilenames = value;
-                        await this.plugin.saveSettings();
-                    });
-                text.inputEl.setAttr('spellcheck', 'false');
-            });
-
-        new Setting(containerEl)
-            .setName('Show notification for image size changes')
-            .then((setting) => addInfoIcon(setting, 'Display a notification showing how much space was saved after processing an image.'))
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.showSpaceSavedNotification)
-                .onChange(async (value) => {
-                    this.plugin.settings.showSpaceSavedNotification = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-
-        new Setting(containerEl)
-            .setName("Show window")
-            .setDesc("Choose whether to show processing options on each image drop/paste")
-            .addDropdown((dropdown) => {
-                dropdown
-                    .addOption("always", "Always show")
-                    .addOption("never", "Never show")
-                    .addOption("ask", "Ask each time")
-                    .setValue(this.plugin.settings.modalBehavior)
-                    .onChange(async (value: ModalBehavior) => {
-                        this.plugin.settings.modalBehavior = value;
-                        await this.plugin.saveSettings();
-                    });
-            });
     }
 
     initializeFormContainer(): void {
+        const containerEl = this.getPresetContainerEl();
         // Find the tab content wrapper
-        const tabContentWrapper = this.containerEl.querySelector(".image-converter-tab-content-wrapper") as HTMLElement;
+        const tabContentWrapper = containerEl.querySelector(".image-converter-tab-content-wrapper") as HTMLElement;
 
         // Check if the form container already exists to avoid duplicates
-        this.formContainer = this.containerEl.querySelector(".image-converter-form-container") as HTMLElement;
+        this.formContainer = containerEl.querySelector(".image-converter-form-container") as HTMLElement;
         if (!this.formContainer) {
-            this.formContainer = this.containerEl.createDiv("image-converter-form-container");
+            this.formContainer = containerEl.createDiv("image-converter-form-container");
         }
 
         // Append the form container to the tab content wrapper if it's not already there
@@ -672,7 +708,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
 
     renderGlobalPresetSelector(): void {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
 
         const globalPresetContainer = containerEl.createDiv("image-converter-global-preset-container");
 
@@ -705,7 +741,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                 toggleLabel.textContent = "Drop/paste presets";
             }
 
-            this.display(); // Re-render the settings tab
+            this.refreshSettings();
         });
 
         // --- Dropdown ---
@@ -737,7 +773,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                         this.plugin.settings.nonDestructiveResizeSettings.selectedResizePreset = DEFAULT_SETTINGS.nonDestructiveResizeSettings.selectedResizePreset;
                     }
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshSettings();
                 });
             });
 
@@ -760,7 +796,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                     };
                     this.plugin.settings.globalPresets.push(newPreset);
                     this.plugin.settings.selectedGlobalPreset = presetName;
-                    void this.plugin.saveSettings().then(() => this.display());
+                    void this.plugin.saveSettings().then(() => this.refreshSettings());
                 }).open();
             });
 
@@ -783,7 +819,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                                 (presetItem) => presetItem.name !== this.plugin.settings.selectedGlobalPreset
                             );
                             this.plugin.settings.selectedGlobalPreset = ""; // Reset selection
-                            void this.plugin.saveSettings().then(() => this.display());
+                            void this.plugin.saveSettings().then(() => this.refreshSettings());
                         }
                     ).open();
                 });
@@ -831,7 +867,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                         } else {
                             new Notice("Image alignment enabled. Reload Obsidian to see changes.", 5000);
                         }
-                        this.display(); // Refresh the settings UI
+                        this.refreshSettings();
                     })
             );
         alignmentToggle.settingEl.addClass("settings-section-toggle-button");
@@ -958,7 +994,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                         } else {
                             new Notice("Image resizing enabled. Reload Obsidian to see changes.", 5000);
                         }
-                        this.display(); // Refresh the settings UI
+                        this.refreshSettings();
                     })
             );
         dragResizeToggle.settingEl.addClass("settings-section-toggle-button");
@@ -995,7 +1031,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             this.plugin.settings.isDragResizeEnabled = value;
                             await this.plugin.saveSettings();
                             // Force refresh to update visible options
-                            this.display();                            
+                            this.refreshSettings();
                         })
                 );
 
@@ -1025,7 +1061,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                         this.plugin.settings.isScrollResizeEnabled = value;
                         await this.plugin.saveSettings();
                         // Force refresh to update visible options
-                        this.display();
+                        this.refreshSettings();
                     }));
 
 
@@ -1155,7 +1191,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                         } else {
                             new Notice("Image captions enabled. Reload Obsidian to see changes.", 5000);
                         }
-                        this.display();
+                        this.refreshSettings();
                     })
             );
         imageCaptionToggle.settingEl.addClass("settings-section-toggle-button");
@@ -1352,7 +1388,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
 
     renderTabs(): void {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
         // Check if tabs container already exists to avoid duplicates
         let tabContainer = containerEl.querySelector(".image-converter-setting-tabs") as HTMLElement;
         if (!tabContainer) {
@@ -1380,7 +1416,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
     }
 
     createTab(tabId: "folder" | "filename" | "conversion" | "linkformat" | "resize", icon: string, label: string) {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
         // Check if tabs container already exists to avoid duplicates
         let tabContainer = containerEl.querySelector(".image-converter-setting-tabs") as HTMLElement;
         if (!tabContainer) {
@@ -1402,7 +1438,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
             this.presetUIState[tabId].newPreset = null;
 
             this.activeTab = tabId;
-            this.display();
+            this.refreshSettings();
         };
     }
 
@@ -1414,7 +1450,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         activePresetSetting: ActivePresetSetting,
         uiState: PresetCategoryUIState<T>
     ): void {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
 
         // 1. Create a wrapper for each tab's content:
         const tabContentWrapper = containerEl.createDiv("image-converter-tab-content-wrapper");
@@ -1443,7 +1479,8 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         );
 
         // Initialize SortableJS for drag and drop
-        new Sortable(cardsContainer, {
+        this.presetSortable?.destroy?.();
+        this.presetSortable = new Sortable(cardsContainer, {
             animation: 150, // Add a smooth animation
             handle: ".image-converter-preset-card-header", // Make the card header the drag handle
             draggable: ".image-converter-preset-card", // Only allow preset cards to be dragged
@@ -1457,7 +1494,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             evt.newIndex
                         );
                         this.plugin.settings.folderPresets = reorderedPresets;
-                        void this.plugin.saveSettings().then(() => this.display());
+                        void this.plugin.saveSettings().then(() => this.refreshSettings());
                     } else if (activePresetSetting === "selectedFilenamePreset") {
                         // Duplicate the logic for filename presets
                         const reorderedPresets = this.arrayMove(
@@ -1466,7 +1503,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             evt.newIndex
                         );
                         this.plugin.settings.filenamePresets = reorderedPresets;
-                        void this.plugin.saveSettings().then(() => this.display());
+                        void this.plugin.saveSettings().then(() => this.refreshSettings());
                     } else if (activePresetSetting === "selectedConversionPreset") {
                         // Duplicate the logic for conversion presets
                         const reorderedPresets = this.arrayMove(
@@ -1475,7 +1512,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             evt.newIndex
                         );
                         this.plugin.settings.conversionPresets = reorderedPresets;
-                        void this.plugin.saveSettings().then(() => this.display());
+                        void this.plugin.saveSettings().then(() => this.refreshSettings());
                     } else if (activePresetSetting === "selectedLinkFormatPreset") {
                         const reorderedPresets = this.arrayMove(
                             this.plugin.settings.linkFormatSettings.linkFormatPresets,
@@ -1483,7 +1520,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             evt.newIndex
                         );
                         this.plugin.settings.linkFormatSettings.linkFormatPresets = reorderedPresets;
-                        void this.plugin.saveSettings().then(() => this.display());
+                        void this.plugin.saveSettings().then(() => this.refreshSettings());
                     } else if (activePresetSetting === "selectedResizePreset") {
                         const reorderedPresets = this.arrayMove(
                             this.plugin.settings.nonDestructiveResizeSettings.resizePresets,
@@ -1491,7 +1528,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                             evt.newIndex
                         );
                         this.plugin.settings.nonDestructiveResizeSettings.resizePresets = reorderedPresets;
-                        void this.plugin.saveSettings().then(() => this.display());
+                        void this.plugin.saveSettings().then(() => this.refreshSettings());
                     }
                 }
             },
@@ -1576,7 +1613,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
     }
 
     getTabContentWrapper(): HTMLElement {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
         const tabContentWrapper = containerEl.querySelector(".image-converter-tab-content-wrapper") as HTMLElement;
         return tabContentWrapper;
     }
@@ -1684,7 +1721,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                                 }
                             }
 
-                            void this.plugin.saveSettings().then(() => this.display());
+                            void this.plugin.saveSettings().then(() => this.refreshSettings());
                         }
                     ).open();
                 });
@@ -2858,7 +2895,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
 
     renderLinkFormatSettings(): void {
-        const { containerEl } = this;
+        const containerEl = this.getPresetContainerEl();
         containerEl.createDiv("image-converter-tab-content-wrapper");
 
         // 1. Preset Management:
@@ -3882,7 +3919,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                 uiState.newPreset = null;
                 this.editingPresetKey = null;
 
-                this.display();
+                this.refreshSettings();
             });
     }
 
@@ -3903,7 +3940,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                 // Hide the form container by removing the 'visible' class - visbility and opacity
                 this.formContainer.removeClass("visible");
 
-                this.display();
+                this.refreshSettings();
             });
     }
 
