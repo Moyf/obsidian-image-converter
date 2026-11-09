@@ -4,6 +4,22 @@ export type SharedSettingDefinition = SettingDefinitionControl | (SettingDefinit
     render: (setting: Setting) => void;
 });
 
+export interface SharedSettingGroupDefinition {
+    type: 'group';
+    heading: string;
+    cls?: string;
+    visible?: () => boolean;
+    items: SharedSettingDefinition[];
+}
+
+export interface SharedSettingPageDefinition {
+    type: 'page';
+    name: string;
+    desc: string;
+    displayValue?: () => string;
+    items: (SharedSettingDefinition | SharedSettingGroupDefinition)[];
+}
+
 export interface SettingsGroupContainer {
     listEl: HTMLElement;
     addSetting(callback: (setting: Setting) => void): void;
@@ -12,11 +28,13 @@ export interface SettingsGroupContainer {
 /** Keep the same grouping on older hosts without requiring the new settings API. */
 export function createSettingsGroup(containerEl: HTMLElement, heading: string, cls: string): SettingsGroupContainer {
     if (requireApiVersion('1.11.0') && typeof SettingGroup === 'function') {
-        return new SettingGroup(containerEl).setHeading(heading).addClass(cls);
+        const group = new SettingGroup(containerEl).addClass(cls);
+        if (heading) group.setHeading(heading);
+        return group;
     }
 
     const groupEl = containerEl.createDiv(cls);
-    groupEl.createDiv({ cls: 'image-converter-setting-group-heading', text: heading });
+    if (heading) groupEl.createDiv({ cls: 'image-converter-setting-group-heading', text: heading });
     const listEl = groupEl.createDiv('image-converter-setting-group-list');
     return {
         listEl,
@@ -34,6 +52,7 @@ interface SettingsBinding {
 /** Render the simple shared definitions on hosts without declarative settings. */
 export function renderLegacySettingDefinitions(group: SettingsGroupContainer, definitions: SharedSettingDefinition[], binding: SettingsBinding): void {
     definitions.forEach(definition => {
+        if (definition.visible === false || typeof definition.visible === 'function' && !definition.visible()) return;
         group.addSetting(setting => {
             setting.setName(definition.name ?? '').setDesc(definition.desc ?? '');
             if ('render' in definition && definition.render) {
@@ -51,6 +70,16 @@ export function renderLegacySettingDefinitions(group: SettingsGroupContainer, de
                 setting.addDropdown(dropdown => dropdown
                     .addOptions(control.options)
                     .setValue(typeof value === 'string' ? value : '')
+                    .onChange(updated => { void binding.setControlValue(control.key, updated); }));
+            } else if (control.type === 'text') {
+                setting.addText(text => text
+                    .setValue(typeof value === 'string' ? value : '')
+                    .setPlaceholder(control.placeholder ?? '')
+                    .onChange(updated => { void binding.setControlValue(control.key, updated); }));
+            } else if (control.type === 'slider') {
+                setting.addSlider(slider => slider
+                    .setLimits(control.min, control.max, control.step)
+                    .setValue(typeof value === 'number' ? value : 0)
                     .onChange(updated => { void binding.setControlValue(control.key, updated); }));
             }
         });

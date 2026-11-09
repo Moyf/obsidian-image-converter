@@ -27,8 +27,9 @@ import {
     getFolderPresetRuleDefinitions,
     renderFolderPresetRules,
 } from './FolderPresetRulesSettings';
-import { getImageImportSettingDefinitions } from './ImageBehaviorSettings';
-import { createSettingsGroup, renderLegacySettingDefinitions } from './utils/settingsGroup';
+import { getImageImportSettingDefinitions, getImageInteractionSettingDefinitions } from './ImageBehaviorSettings';
+import { applyImageDisplaySettingChange, getImageDisplaySettingPages, isImageDisplayVisibilityKey } from './ImageDisplaySettings';
+import { createSettingsGroup, renderLegacySettingDefinitions, type SharedSettingPageDefinition } from './utils/settingsGroup';
 
 import Sortable from "sortablejs";
 
@@ -111,9 +112,6 @@ interface PresetUIState {
     linkformat: PresetCategoryUIState<LinkFormatPreset>
     globalPresetVisible: boolean; // Track visibility of preset categories
     resize: PresetCategoryUIState<NonDestructiveResizePreset>;
-    imageAlignmentSectionCollapsed: boolean;
-    imageDragResizeSectionCollapsed: boolean;
-    imageCaptionSectionCollapsed: boolean; // ADDED: Track caption section collapse state
 }
 
 interface PresetCategoryUIState<T> {
@@ -455,6 +453,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
     private cachedFirstMarkdownFile?: TFile;
     private presetContainerEl?: HTMLElement;
     private presetSortable?: Sortable;
+    private legacyPageName?: string;
 
     private getCachedFirstMarkdownFile(): TFile | undefined {
         if (!this.cachedFirstMarkdownFile) {
@@ -497,7 +496,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
 
     constructor(app: App, private plugin: ImageConverterPlugin) {
         super(app, plugin);
-        // Initialize UI state with everything collapsed
+        // Preserve preset editing state while navigating between settings pages.
         this.presetUIState = {
             folder: { editingPreset: null, newPreset: null },
             filename: { editingPreset: null, newPreset: null },
@@ -505,9 +504,6 @@ export class ImageConverterSettingTab extends PluginSettingTab {
             linkformat: { editingPreset: null, newPreset: null },
             globalPresetVisible: true,
             resize: { editingPreset: null, newPreset: null },
-            imageAlignmentSectionCollapsed: true,
-            imageDragResizeSectionCollapsed: true,
-            imageCaptionSectionCollapsed: true // ADDED: Initialize caption section collapse state
         };
     }
 
@@ -516,12 +512,9 @@ export class ImageConverterSettingTab extends PluginSettingTab {
             this.customSection('Drop/paste presets', containerEl => this.renderPresetControls(containerEl)),
             {
                 type: 'group',
-                heading: 'Image behavior',
-                cls: 'image-converter-image-behavior-group',
+                heading: 'Image import',
+                cls: 'image-converter-image-import-group',
                 items: [
-                    this.customSection('Image alignment', containerEl => this.renderImageAlignmentSettingsSection(containerEl)),
-                    this.customSection('Drag & scroll resize', containerEl => this.renderImageDragResizeSettingsSection(containerEl)),
-                    this.customSection('Captions', containerEl => this.renderImageCaptionSettingsSection(containerEl)),
                     {
                         type: 'page',
                         name: FOLDER_RULES_PAGE_NAME,
@@ -531,22 +524,40 @@ export class ImageConverterSettingTab extends PluginSettingTab {
                     ...getImageImportSettingDefinitions(this.plugin),
                 ],
             },
+            {
+                type: 'group',
+                heading: 'Image display & interaction',
+                cls: 'image-converter-image-display-group',
+                items: [
+                    ...getImageDisplaySettingPages(this.plugin),
+                    ...getImageInteractionSettingDefinitions(this.plugin),
+                ],
+            },
         ];
     }
 
     getControlValue(key: string): unknown {
+        if (key === 'imageAlignmentCacheCleanupInterval') return this.plugin.settings.imageAlignmentCacheCleanupInterval / 60000;
         return Reflect.get(this.plugin.settings, key);
     }
 
     async setControlValue(key: string, value: unknown): Promise<void> {
-        Reflect.set(this.plugin.settings, key, value);
+        const storedValue = key === 'imageAlignmentCacheCleanupInterval' && typeof value === 'number' ? value * 60000 : value;
+        Reflect.set(this.plugin.settings, key, storedValue);
         await this.plugin.saveSettings();
+        await applyImageDisplaySettingChange(this.plugin, key, value);
+        if (isImageDisplayVisibilityKey(key)) {
+            if (requireApiVersion('1.13.0')) this.refreshDomState();
+            else this.refreshSettings();
+        }
     }
 
     /** Rebuild definitions on new hosts; display remains the older-host fallback. */
     private refreshSettings(): void {
         if (requireApiVersion('1.13.0')) {
             this.update();
+        } else if (this.legacyPageName) {
+            this.displayLegacySubpage(this.legacyPageName);
         } else {
             this.renderLegacyTab();
         }
@@ -577,6 +588,7 @@ export class ImageConverterSettingTab extends PluginSettingTab {
     }
 
     private renderLegacyTab(): void {
+        this.legacyPageName = undefined;
         const { containerEl } = this;
         this.presetSortable?.destroy?.();
         this.presetSortable = undefined;
@@ -585,27 +597,51 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         containerEl.addClass("image-converter-settings-tab");
 
         this.renderPresetControls(containerEl);
-        const behaviorGroup = createSettingsGroup(containerEl, 'Image behavior', 'image-converter-image-behavior-group');
-        this.renderImageAlignmentSettingsSection(behaviorGroup.listEl);
-        this.renderImageDragResizeSettingsSection(behaviorGroup.listEl);
-        this.renderImageCaptionSettingsSection(behaviorGroup.listEl);
-        behaviorGroup.addSetting(setting => {
+        const importGroup = createSettingsGroup(containerEl, 'Image import', 'image-converter-image-import-group');
+        importGroup.addSetting(setting => {
             setting.setName(FOLDER_RULES_PAGE_NAME)
                 .setDesc(FOLDER_RULES_PAGE_DESCRIPTION)
-                .addButton(button => button.setButtonText('Configure').onClick(() => this.displayFolderRulesPage()));
+                .addButton(button => button.setButtonText('Configure').onClick(() => this.displayLegacySubpage(FOLDER_RULES_PAGE_NAME)));
         });
-        renderLegacySettingDefinitions(behaviorGroup, getImageImportSettingDefinitions(this.plugin), this);
+        renderLegacySettingDefinitions(importGroup, getImageImportSettingDefinitions(this.plugin), this);
+        const displayGroup = createSettingsGroup(containerEl, 'Image display & interaction', 'image-converter-image-display-group');
+        for (const page of getImageDisplaySettingPages(this.plugin)) {
+            displayGroup.addSetting(setting => {
+                setting.setName(page.name).setDesc(page.desc)
+                    .addButton(button => button.setButtonText('Configure').onClick(() => this.displayLegacySubpage(page.name)));
+            });
+        }
+        renderLegacySettingDefinitions(displayGroup, getImageInteractionSettingDefinitions(this.plugin), this);
     }
 
-    private displayFolderRulesPage(): void {
+    private displayLegacySubpage(name: string): void {
+        this.legacyPageName = name;
         this.presetSortable?.destroy?.();
         this.presetSortable = undefined;
         this.presetContainerEl = undefined;
         this.containerEl.empty();
         new Setting(this.containerEl)
-            .setName(FOLDER_RULES_PAGE_NAME)
+            .setName(name)
             .addButton(button => button.setButtonText('Back').onClick(() => this.renderLegacyTab()));
-        renderFolderPresetRules(this.containerEl, this.plugin);
+        if (name === FOLDER_RULES_PAGE_NAME) {
+            renderFolderPresetRules(this.containerEl, this.plugin);
+            return;
+        }
+        const page = getImageDisplaySettingPages(this.plugin).find(candidate => candidate.name === name);
+        if (page) this.renderLegacyDisplayPage(page);
+    }
+
+    private renderLegacyDisplayPage(page: SharedSettingPageDefinition): void {
+        const topGroup = createSettingsGroup(this.containerEl, '', 'image-converter-subpage-enable');
+        for (const item of page.items) {
+            if ('type' in item) {
+                if (item.visible && !item.visible()) continue;
+                const group = createSettingsGroup(this.containerEl, item.heading, item.cls ?? 'image-converter-subpage-group');
+                renderLegacySettingDefinitions(group, item.items, this);
+            } else {
+                renderLegacySettingDefinitions(topGroup, [item], this);
+            }
+        }
     }
 
     hide(): void {
@@ -836,565 +872,6 @@ export class ImageConverterSettingTab extends PluginSettingTab {
         }
     }
 
-    renderImageAlignmentSettingsSection(containerEl: HTMLElement): void {
-        // --- Image Alignment Settings Section ---
-        const imageAlignmentSection = containerEl.createDiv("image-converter-settings-section");
-        imageAlignmentSection.addClass("image-alignment-settings-section");
-
-        // Conditionally add 'image-alignment-enabled' class
-        if (this.plugin.settings.isImageAlignmentEnabled) {
-            imageAlignmentSection.addClass("image-alignment-enabled");
-        } else {
-            imageAlignmentSection.removeClass("image-alignment-enabled");
-        }
-
-        // --- Clickable Header with Toggle ---
-        const toggleAlignmentVisibilityEl = imageAlignmentSection.createDiv("settings-section-header");
-
-        // Chevron Icon (for collapsing/expanding)
-        const alignmentChevronIcon = toggleAlignmentVisibilityEl.createEl("i");
-        setIcon(alignmentChevronIcon, "chevron-down");
-        alignmentChevronIcon.addClass("settings-section-chevron-icon");
-
-        // Section Title
-        toggleAlignmentVisibilityEl.createEl("span", { text: "Image alignment", cls: "settings-section-title" });
-        // // Clarification Text
-        // toggleAlignmentVisibilityEl.createEl("span", {
-        //     text: "For changes to take effect, please reload the app",
-        //     cls: "settings-section-clarification-text"
-        // });
-
-        // Toggle Switch (integrated into header)
-        const alignmentToggle = new Setting(toggleAlignmentVisibilityEl)
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.isImageAlignmentEnabled)
-                    .onChange(async (value) => {
-                        this.plugin.settings.isImageAlignmentEnabled = value;
-                        await this.plugin.saveSettings();
-                        if (!value) {
-                            new Notice("Image alignment disabled. Reload Obsidian to see changes.", 5000);
-                        } else {
-                            new Notice("Image alignment enabled. Reload Obsidian to see changes.", 5000);
-                        }
-                        this.refreshSettings();
-                    })
-            );
-        alignmentToggle.settingEl.addClass("settings-section-toggle-button");
-
-        // --- APPLY COLLAPSED STATE FROM UI STATE ---
-        if (this.presetUIState.imageAlignmentSectionCollapsed) { // CHECK UI STATE
-            imageAlignmentSection.addClass("settings-section-collapsed");
-            setIcon(alignmentChevronIcon, "chevron-right"); // Ensure chevron is correct on initial render
-        }
-
-        toggleAlignmentVisibilityEl.onClickEvent((event: MouseEvent) => {
-            event.stopPropagation();
-            // TOGGLE UI STATE AND CLASS INDEPENDENTLY
-            this.presetUIState.imageAlignmentSectionCollapsed = !this.presetUIState.imageAlignmentSectionCollapsed; // UPDATE UI STATE
-            imageAlignmentSection.toggleClass("settings-section-collapsed", this.presetUIState.imageAlignmentSectionCollapsed); // APPLY CLASS BASED ON UI STATE
-
-            if (this.presetUIState.imageAlignmentSectionCollapsed) { // CHECK UI STATE
-                setIcon(alignmentChevronIcon, "chevron-right");
-            } else {
-                setIcon(alignmentChevronIcon, "chevron-down");
-            }
-        });
-
-        if (this.plugin.settings.isImageAlignmentEnabled) { // Conditionally render cleanup options
-            new Setting(imageAlignmentSection)
-                .setName("Default alignment for new images")
-                .setDesc("Automatically apply this alignment when inserting new images. Set to 'none' to disable.")
-                .addDropdown(dropdown => dropdown
-                    .addOptions({
-                        'none': 'None',
-                        'left': 'Left',
-                        'center': 'Center',
-                        'right': 'Right'
-                    })
-                    .setValue(this.plugin.settings.imageAlignmentDefaultAlignment)
-                    .onChange(async (value: 'none' | 'left' | 'center' | 'right') => {
-                        this.plugin.settings.imageAlignmentDefaultAlignment = value;
-                        await this.plugin.saveSettings();
-                    })
-                );
-
-            // --- Cache Location Setting ---
-            new Setting(imageAlignmentSection)
-                .setName("Image alignment cache location")
-                .setDesc(
-                    "Choose where to store the cache file for image alignments. " +
-                    "Note: App reload required."
-                )
-                .then((setting) => addInfoIcon(
-                    setting,
-                    "If you use Obsidian Sync, it is strongly recommended to use the SAME location on all your devices to ensure consistent behavior. Default: Obsidian's config folder (syncable)."
-                ))
-                .addDropdown(dropdown => dropdown
-                    .addOptions({
-                        config: "Within config folder (syncable)",
-                        plugin: "Within plugin folder (not syncable)",
-                    })
-                    .setValue(this.plugin.settings.imageAlignmentCacheLocation)
-                    .onChange(async (value: "config" | "plugin") => {
-                        this.plugin.settings.imageAlignmentCacheLocation = value;
-                        await this.plugin.saveSettings();
-                        this.plugin.ImageAlignmentManager?.updateCacheFilePath();
-                        void this.plugin.ImageAlignmentManager?.loadCache();
-                    })
-                );
-
-            new Setting(imageAlignmentSection) // Interval setting is now inside the collapsible section
-                .setName("Image alignment cache cleanup interval")
-                .setDesc(
-                    "Interval (in minutes) to clean up redundant entries from image alignment cache. Default: 1 hour (0 to disable)"
-                )
-                .addSlider(slider => slider
-                    .setLimits(0, 120, 5) // Min: 0, Max: 120, Step: 5 (minutes)
-                    .setValue(this.plugin.settings.imageAlignmentCacheCleanupInterval / (60 * 1000))
-                    .setDynamicTooltip()
-                    .onChange(async (value) => {
-                        const minutes = value;
-                        this.plugin.settings.imageAlignmentCacheCleanupInterval = minutes * 60 * 1000;
-                        await this.plugin.saveSettings();
-                        this.plugin.ImageAlignmentManager?.scheduleCacheCleanup();
-                    })
-                );
-        }
-    }
-
-    renderImageDragResizeSettingsSection(containerEl: HTMLElement): void {
-        // --- Image Drag & Resize Settings Section ---
-        const imageDragResizeSection = containerEl.createDiv("image-converter-settings-section");
-        imageDragResizeSection.addClass("image-drag-resize-settings-section");
-
-        // Conditionally add 'image-drag-resize-enabled' class
-        if (this.plugin.settings.isImageResizeEnbaled) {
-            imageDragResizeSection.addClass("image-drag-resize-enabled");
-        } else {
-            imageDragResizeSection.removeClass("image-drag-resize-enabled");
-        }
-
-        // --- Clickable Header with Toggle ---
-        const toggleDragResizeVisibilityEl = imageDragResizeSection.createDiv("settings-section-header");
-
-        // Chevron Icon (for collapsing/expanding)
-        const dragResizeChevronIcon = toggleDragResizeVisibilityEl.createEl("i");
-        setIcon(dragResizeChevronIcon, "chevron-down");
-        dragResizeChevronIcon.addClass("settings-section-chevron-icon");
-
-        // Section Title
-        toggleDragResizeVisibilityEl.createEl("span", { text: "Drag & scroll resize", cls: "settings-section-title" });
-        // // Clarification Text
-        // toggleDragResizeVisibilityEl.createEl("span", {
-        //     text: "For changes to take effect, please reload the app",
-        //     cls: "settings-section-clarification-text"
-        // });
-
-        // Toggle Switch (integrated into header)
-        const dragResizeToggle = new Setting(toggleDragResizeVisibilityEl)
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.isImageResizeEnbaled)
-                    .onChange(async (value) => {
-                        this.plugin.settings.isImageResizeEnbaled = value;
-                        await this.plugin.saveSettings();
-                        if (!value) {
-                            new Notice("Image resizing disabled. Reload Obsidian to see changes.", 5000);
-                        } else {
-                            new Notice("Image resizing enabled. Reload Obsidian to see changes.", 5000);
-                        }
-                        this.refreshSettings();
-                    })
-            );
-        dragResizeToggle.settingEl.addClass("settings-section-toggle-button");
-
-        // --- APPLY COLLAPSED STATE FROM UI STATE ---
-        if (this.presetUIState.imageDragResizeSectionCollapsed) { // CHECK UI STATE
-            imageDragResizeSection.addClass("settings-section-collapsed");
-            setIcon(dragResizeChevronIcon, "chevron-right"); // Ensure chevron is correct on initial render
-        }
-
-        toggleDragResizeVisibilityEl.onClickEvent((event: MouseEvent) => {
-            event.stopPropagation();
-            // TOGGLE UI STATE AND CLASS INDEPENDENTLY
-            this.presetUIState.imageDragResizeSectionCollapsed = !this.presetUIState.imageDragResizeSectionCollapsed; // UPDATE UI STATE
-            imageDragResizeSection.toggleClass("settings-section-collapsed", this.presetUIState.imageDragResizeSectionCollapsed); // APPLY CLASS BASED ON UI STATE
-
-            if (this.presetUIState.imageDragResizeSectionCollapsed) { // CHECK UI STATE
-                setIcon(dragResizeChevronIcon, "chevron-right");
-            } else {
-                setIcon(dragResizeChevronIcon, "chevron-down");
-            }
-        });
-
-        if (this.plugin.settings.isImageResizeEnbaled) { // Conditionally render cleanup options
-            // --- Checkboxes for Drag and Scroll Resize ---
-            new Setting(imageDragResizeSection)
-                .setName("Enable drag resize")
-                .setDesc("Allow resizing images by dragging edges of the image.")
-                .then((setting) => addInfoIcon(setting, "This creates a new <DIV> under the image to show resizing HANDLES. But this might cause some incompatibility with certain themes and cause images to jump around."))
-                .addToggle((toggle) =>
-                    toggle
-                        .setValue(this.plugin.settings.isDragResizeEnabled)
-                        .onChange(async (value) => {
-                            this.plugin.settings.isDragResizeEnabled = value;
-                            await this.plugin.saveSettings();
-                            // Force refresh to update visible options
-                            this.refreshSettings();
-                        })
-                );
-
-            // Drag-resize specific settings - only show when drag resize is enabled
-            if (this.plugin.settings.isDragResizeEnabled) {
-                const apectRatioSettingsContainer = imageDragResizeSection.createDiv('fix-aspect-ratio-settings');
-
-                new Setting(apectRatioSettingsContainer)
-                    .setName('Lock the aspect ratio when dragging')
-                    .setDesc('Prevent accidental distortions of image aspect ratio when dragging to resize')
-                    .addToggle(toggle => toggle
-                        .setValue(this.plugin.settings.isDragAspectRatioLocked)
-                        .onChange(async (value) => {
-                            this.plugin.settings.isDragAspectRatioLocked = value;
-                            await this.plugin.saveSettings();
-
-                        }));
-            }
-
-
-            new Setting(imageDragResizeSection)
-                .setName('Enable scroll-wheel resize')
-                .setDesc('Allow resizing images using the scroll wheel')
-                .addToggle(toggle => toggle
-                    .setValue(this.plugin.settings.isScrollResizeEnabled)
-                    .onChange(async (value) => {
-                        this.plugin.settings.isScrollResizeEnabled = value;
-                        await this.plugin.saveSettings();
-                        // Force refresh to update visible options
-                        this.refreshSettings();
-                    }));
-
-
-            // Scroll-wheel specific settings - only show when scroll-wheel resize is enabled
-            if (this.plugin.settings.isScrollResizeEnabled) {
-                const scrollSettingsContainer = imageDragResizeSection.createDiv('scroll-resize-settings');
-
-                new Setting(scrollSettingsContainer)
-                    .setName('Scroll-wheel modifier key')
-                    .setDesc('Key that must be held while using scroll-wheel to resize')
-                    .addDropdown(dropdown => dropdown
-                        .addOptions({
-                            'None': 'None',
-                            'Shift': 'Shift',
-                            'Control': 'Control',
-                            'Alt': 'Alt',
-                            'Meta': 'Meta'
-                        })
-                        .setValue(this.plugin.settings.scrollwheelModifier)
-                        .onChange(async (value: "None" | "Shift" | "Control" | "Alt" | "Meta") => {
-                            this.plugin.settings.scrollwheelModifier = value;
-                            await this.plugin.saveSettings();
-                        }));
-
-                new Setting(scrollSettingsContainer)
-                    .setName('Scroll-wheel resize sensitivity')
-                    .setDesc('Adjust how sensitive the scroll-wheel resize is (0.01-1.0)')
-                    .addSlider(slider => slider
-                        .setLimits(0.01, 1, 0.01)
-                        .setValue(this.plugin.settings.resizeSensitivity)
-                        .setDynamicTooltip()
-                        .onChange(async (value) => {
-                            this.plugin.settings.resizeSensitivity = value;
-                            await this.plugin.saveSettings();
-                        }));
-            }
-
-            new Setting(imageDragResizeSection)
-                .setName("Disable Obsidian image selection on click")
-                .then((setting) => addInfoIcon(setting, "Reveal the Markdown link and keep focus in the editor when clicking an internal image in live preview, while hiding Obsidian's native outline, resize corner, and image action buttons. Cursor placement follows the drop/paste cursor position setting."))
-                .setDesc("Reveal the Markdown link and keep focus in the editor when clicking an internal image in live preview, while hiding Obsidian's native outline, resize corner, and image action buttons. Cursor placement follows the drop/paste cursor position setting.")
-                .addToggle((toggle) =>
-                    toggle
-                        .setValue(this.plugin.settings.disableObsidianImageSelectionOnClick)
-                        .onChange(async (value) => {
-                            this.plugin.settings.disableObsidianImageSelectionOnClick = value;
-                            await this.plugin.saveSettings();
-                            new Notice(
-                                value
-                                    ? "Obsidian image selection disabled. Reload Obsidian to see changes."
-                                    : "Obsidian image selection enabled. Reload Obsidian to see changes.",
-                                5000
-                            );
-                        })
-                );
-
-            // New Setting: Resize Cursor Location
-            new Setting(imageDragResizeSection)
-                .setName("Cursor position during resize")
-                .then((setting) => addInfoIcon(setting, "Where to place the cursor when resizing an image. Note: 'don't move cursor' - will try to keep your exisiting cursor in place but if you DRAG-RESIZE and cursor is still over the image when you finish resizing, it will get the text selected."))
-                .addDropdown((dropdown) => {
-                    dropdown
-                        .addOption("front", "At the front of the link")
-                        .addOption("back", "At the back of the link")
-                        .addOption("below", "1 Line below the image")
-                        .addOption("none", "Don't move Cursor")
-                        .setValue(this.plugin.settings.resizeCursorLocation)
-                        .onChange(async (value: "front" | "back" | "below" | "none") => {
-                            this.plugin.settings.resizeCursorLocation = value;
-                            await this.plugin.saveSettings();
-                        });
-                });
-
-            new Setting(imageDragResizeSection)
-                .setName("Allow resizing in reading mode")
-                .setDesc("Non-destructive resizing in reading mode is only visual, thus if it is too distractive you can disable it.")
-                .addToggle((toggle) =>
-                    toggle
-                        .setValue(this.plugin.settings.isResizeInReadingModeEnabled)
-                        .onChange(async (value) => {
-                            this.plugin.settings.isResizeInReadingModeEnabled = value;
-                            await this.plugin.saveSettings();
-                        })
-                );
-
-        }
-    }
-
-    renderImageCaptionSettingsSection(containerEl: HTMLElement): void {
-        // --- Image Caption Settings Section ---
-        const imageCaptionSection = containerEl.createDiv("image-converter-settings-section");
-        imageCaptionSection.addClass("image-caption-settings-section");
-
-        // Conditionally add 'image-caption-enabled' class
-        if (this.plugin.settings.enableImageCaptions) {
-            imageCaptionSection.addClass("image-caption-enabled");
-        } else {
-            imageCaptionSection.removeClass("image-caption-enabled");
-        }
-
-        // --- Clickable Header with Toggle ---
-        const toggleCaptionVisibilityEl = imageCaptionSection.createDiv("settings-section-header");
-
-        // Chevron Icon (for collapsing/expanding)
-        const captionChevronIcon = toggleCaptionVisibilityEl.createEl("i");
-        setIcon(captionChevronIcon, "chevron-down");
-        captionChevronIcon.addClass("settings-section-chevron-icon");
-
-        // Section Title
-        toggleCaptionVisibilityEl.createEl("span", { text: "Captions", cls: "settings-section-title" });
-        // // Clarification Text
-        // toggleCaptionVisibilityEl.createEl("span", {
-        //     text: "For changes to take effect, please reload the app",
-        //     cls: "settings-section-clarification-text"
-        // });
-
-        // Toggle Switch (integrated into header)
-        const imageCaptionToggle = new Setting(toggleCaptionVisibilityEl)
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableImageCaptions)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableImageCaptions = value;
-                        await this.plugin.saveSettings();
-                        if (!value) {
-                            new Notice("Image captions disabled. Reload Obsidian to see changes.", 5000);
-                        } else {
-                            new Notice("Image captions enabled. Reload Obsidian to see changes.", 5000);
-                        }
-                        this.refreshSettings();
-                    })
-            );
-        imageCaptionToggle.settingEl.addClass("settings-section-toggle-button");
-
-        // --- APPLY COLLAPSED STATE FROM UI STATE ---
-        if (this.presetUIState.imageCaptionSectionCollapsed) {
-            imageCaptionSection.addClass("settings-section-collapsed");
-            setIcon(captionChevronIcon, "chevron-right");
-        }
-
-        toggleCaptionVisibilityEl.onClickEvent((event: MouseEvent) => {
-            event.stopPropagation();
-            // TOGGLE UI STATE AND CLASS INDEPENDENTLY
-            this.presetUIState.imageCaptionSectionCollapsed = !this.presetUIState.imageCaptionSectionCollapsed;
-            imageCaptionSection.toggleClass("settings-section-collapsed", this.presetUIState.imageCaptionSectionCollapsed);
-
-            if (this.presetUIState.imageCaptionSectionCollapsed) {
-                setIcon(captionChevronIcon, "chevron-right");
-            } else {
-                setIcon(captionChevronIcon, "chevron-down");
-            }
-        });
-
-        // --- Image Captions Settings (Moved from display() function) ---
-        if (this.plugin.settings.enableImageCaptions) {
-            new Setting(imageCaptionSection)
-                .setName("Text alignment within caption")
-                .addDropdown(dropdown =>
-                    dropdown.addOptions({
-                        "left": "Left",
-                        "center": "Center",
-                        "right": "Right"
-                    })
-                        .setValue(this.plugin.settings.captionAlignment)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionAlignment = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Text transform")
-                .setDesc("Set text transformation")
-                .addDropdown(dropdown =>
-                    dropdown.addOptions({
-                        "none": "None",
-                        "uppercase": "UPPERCASE",
-                        "lowercase": "lowercase",
-                        "capitalize": "Capitalize"
-                    })
-                        .setValue(this.plugin.settings.captionTextTransform)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionTextTransform = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection) // Font Size Setting is now FIRST setting in the section
-                .setName("Font size")
-                .setDesc("Set the font size for image captions (e.g., 12px, 1.2em).")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionFontSize)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionFontSize = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Weight")
-                .setDesc("Set font weight (e.g., normal, bold, 600)")
-                .addDropdown(dropdown =>
-                    dropdown.addOptions({
-                        "normal": "Normal",
-                        "bold": "Bold",
-                        ["300"]: "Light",
-                        ["400"]: "Regular",
-                        ["500"]: "Medium",
-                        ["600"]: "Semi-bold",
-                        ["700"]: "Bold"
-                    })
-                        .setValue(this.plugin.settings.captionFontWeight)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionFontWeight = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Color")
-                .setDesc("Choose a color for image captions e.g.: Red, grey, white, black, hsl(50, 50%, 50%), rgb(50%, 75%, 100%) ")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionColor)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionColor = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Font style")
-                .setDesc("Set the font style (e.g., italic, normal).")
-                .addDropdown(dropdown =>
-                    dropdown.addOptions({
-                        "italic": "Italic", "normal": "Normal"
-                    })
-                        .setValue(this.plugin.settings.captionFontStyle)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionFontStyle = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Background color")
-                .setDesc("Choose a background color for image captions (e.g.: Transparent, #f5f5f5, rgba(255,255,255,0.8))")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionBackgroundColor)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionBackgroundColor = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            // In renderImageCaptionSettingsSection
-            new Setting(imageCaptionSection)
-                .setName("Border")
-                .setDesc("Set border style (e.g., 1px solid gray)")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionBorder)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionBorder = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-            new Setting(imageCaptionSection)
-                .setName("Border corner radius")
-                .setDesc("Set border radius for caption (e.g., make it slightly rounded: 4px)")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionBorderRadius)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionBorderRadius = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Space at the top")
-                .setDesc("Set space between image and caption (e.g., 4px, 8px)")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionMarginTop)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionMarginTop = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            new Setting(imageCaptionSection)
-                .setName("Padding")
-                .setDesc("Set padding around caption (e.g., 4px 8px)")
-                .addText(text =>
-                    text.setValue(this.plugin.settings.captionPadding)
-                        .onChange(async (value) => {
-                            this.plugin.settings.captionPadding = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.captionManager?.applyCaptionStyles();
-                        })
-                );
-
-            // Skip Caption Extensions
-            new Setting(imageCaptionSection)
-                .setName("Skip caption extensions")
-                .setDesc("Comma-separated list of image extensions to exclude from captions (e.g., PNG, JPG).")
-                .addText((text) => {
-                    text.setValue(this.plugin.settings.skipCaptionExtensions)
-                        .onChange(async (value) => {
-                            this.plugin.settings.skipCaptionExtensions = value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.setAttr('spellcheck', 'false');
-                });
-        }
-    }
 
 
     renderTabs(): void {
@@ -3980,9 +3457,6 @@ export class ImageConverterSettingTab extends PluginSettingTab {
             linkformat: { editingPreset: null, newPreset: null },
             resize: { editingPreset: null, newPreset: null },
             globalPresetVisible: true,
-            imageAlignmentSectionCollapsed: false,
-            imageDragResizeSectionCollapsed: false,
-            imageCaptionSectionCollapsed: false // ADDED: Reset caption section collapse state
         };
     }
 }

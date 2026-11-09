@@ -7,16 +7,12 @@ import type { SharedSettingDefinition } from './utils/settingsGroup';
 export function getImageImportSettingDefinitions(plugin: ImageConverterPlugin): SharedSettingDefinition[] {
     return [
         {
-            name: 'Right-click menu',
-            render: setting => {
-                addInfoIcon(setting, 'Enable to show a right-click context menu.');
-                setting.addToggle(toggle => toggle
-                    .setValue(plugin.settings.enableContextMenu)
-                    .onChange(async value => {
-                        plugin.settings.enableContextMenu = value;
-                        await plugin.saveSettings();
-                        new Notice(`Context menu ${value ? 'enabled' : 'disabled'}. Reload Obsidian to see changes.`, 5000);
-                    }));
+            name: 'Show window',
+            desc: 'Choose whether to show processing options on each image drop/paste.',
+            control: {
+                type: 'dropdown',
+                key: 'modalBehavior',
+                options: { always: 'Always show', never: 'Never show', ask: 'Ask each time' },
             },
         },
         {
@@ -34,15 +30,6 @@ export function getImageImportSettingDefinitions(plugin: ImageConverterPlugin): 
             control: { type: 'toggle', key: 'showSpaceSavedNotification' },
         },
         {
-            name: 'Show window',
-            desc: 'Choose whether to show processing options on each image drop/paste.',
-            control: {
-                type: 'dropdown',
-                key: 'modalBehavior',
-                options: { always: 'Always show', never: 'Never show', ask: 'Ask each time' },
-            },
-        },
-        {
             name: 'Never process these filenames',
             desc: 'Comma-separated filenames or patterns to exclude from processing.',
             render: setting => {
@@ -57,4 +44,20 @@ export function getImageImportSettingDefinitions(plugin: ImageConverterPlugin): 
             },
         },
     ];
+}
+
+export function getImageInteractionSettingDefinitions(plugin: ImageConverterPlugin): SharedSettingDefinition[] {
+    return [{
+        name: 'Right-click menu',
+        render: setting => {
+            addInfoIcon(setting, 'Enable to show a right-click context menu.');
+            setting.addToggle(toggle => toggle
+                .setValue(plugin.settings.enableContextMenu)
+                .onChange(async value => {
+                    plugin.settings.enableContextMenu = value;
+                    await plugin.saveSettings();
+                    new Notice(`Context menu ${value ? 'enabled' : 'disabled'}. Reload Obsidian to see changes.`, 5000);
+                }));
+        },
+    }];
 }

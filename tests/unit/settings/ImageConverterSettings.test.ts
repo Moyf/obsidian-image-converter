@@ -55,6 +55,16 @@ function changeSelect(sel: HTMLSelectElement, value: string) {
   sel.dispatchEvent(new Event('change'));
 }
 
+function openSettingsSubpage(tab: ImageConverterSettingTab, name: string) {
+  const row = Array.from(tab.containerEl.querySelectorAll('.setting-item'))
+    .find(item => item.querySelector('.setting-item-name')?.textContent === name);
+  click(row?.querySelector('button'));
+}
+
+function backToSettings(tab: ImageConverterSettingTab) {
+  click(Array.from(tab.containerEl.querySelectorAll('button')).find(button => button.textContent === 'Back'));
+}
+
 
 function makeVariableProcessor(variables: Record<string, Array<{ name: string; description: string; example: string }>>) {
   return {
@@ -397,20 +407,24 @@ describe('Settings defaults, global preset application, and field constraints (1
     expect(tab.formContainer.querySelector('.image-converter-form-buttons button.cta')?.textContent).toBe('Save');
   });
 
-  it('groups image behavior below presets and keeps folder rules behind a subpage', () => {
+  it('separates import and display groups and keeps all advanced controls behind subpages', () => {
     tab.display();
-    const group = tab.containerEl.querySelector('.image-converter-image-behavior-group')!;
-    expect(group.querySelector('.image-alignment-settings-section')).toBeTruthy();
-    expect(group.querySelector('.image-drag-resize-settings-section')).toBeTruthy();
-    expect(group.querySelector('.image-caption-settings-section')).toBeTruthy();
-    expect(group.textContent).toContain('Right-click menu');
-    expect(group.textContent).toContain('Folder-based presets');
+    const importGroup = tab.containerEl.querySelector('.image-converter-image-import-group')!;
+    const displayGroup = tab.containerEl.querySelector('.image-converter-image-display-group')!;
+    expect(importGroup.textContent).toContain('Folder-based presets');
+    expect(importGroup.textContent).toContain('Show window');
+    expect(importGroup.textContent).not.toContain('Right-click menu');
+    expect(displayGroup.textContent).toContain('Right-click menu');
+    expect(displayGroup.textContent).toContain('Image alignment');
+    expect(displayGroup.textContent).toContain('Drag & scroll resize');
+    expect(displayGroup.textContent).toContain('Captions');
+    expect(tab.containerEl.querySelector('.settings-section-header')).toBeNull();
+    expect(displayGroup.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
     expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeNull();
-    const configure = Array.from(group.querySelectorAll('button')).find(button => button.textContent === 'Configure')!;
-    configure.click();
+    openSettingsSubpage(tab, 'Folder-based presets');
     expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeTruthy();
     expect(tab.containerEl.querySelector('.image-converter-setting-tabs')).toBeNull();
-    Array.from(tab.containerEl.querySelectorAll('button')).find(button => button.textContent === 'Back')!.click();
+    backToSettings(tab);
     expect(tab.containerEl.querySelector('.image-converter-setting-tabs')).toBeTruthy();
     expect(tab.containerEl.querySelector('.image-converter-folder-rules')).toBeNull();
   });
@@ -651,28 +665,29 @@ describe('Settings defaults, global preset application, and field constraints (1
 
   it('11.6 Field constraints: sliders have correct min/max and accept sanitized values', async () => {
     tab.display();
+    openSettingsSubpage(tab, 'Image alignment');
 
     // Image alignment cache cleanup interval slider (0..120 minutes)
-    const alignSection = tab.containerEl.querySelector('.image-alignment-settings-section') as HTMLElement;
-    const alignSlider = alignSection?.querySelector('input[type="range"]') as HTMLInputElement;
+    const alignSlider = tab.containerEl.querySelector('input[type="range"]') as HTMLInputElement;
     expect(alignSlider?.min).toBe('0');
     expect(alignSlider?.max).toBe('120');
+    expect(alignSlider?.value).toBe('60');
+    backToSettings(tab);
+    openSettingsSubpage(tab, 'Drag & scroll resize');
 
     // Scroll-wheel resize sensitivity slider (0.01..1)
-    const scrollSection = tab.containerEl.querySelector('.scroll-resize-settings') as HTMLElement;
-    const sensSlider = scrollSection?.querySelector('input[type="range"]') as HTMLInputElement;
+    const sensSlider = tab.containerEl.querySelector('input[type="range"]') as HTMLInputElement;
     expect(sensSlider?.min).toBe('0.01');
     expect(sensSlider?.max).toBe('1');
   });
 
   it('Image selection toggle shows the standard reload notification', async () => {
     tab.display();
+    openSettingsSubpage(tab, 'Drag & scroll resize');
 
-    const resizeSection = tab.containerEl.querySelector('.image-drag-resize-settings-section');
-    const cursorSelect = Array.from(resizeSection?.querySelectorAll('select') ?? [])
-      .find((select) => select.querySelector('option[value="below"]'));
-    const imageSelectionToggle = cursorSelect?.parentElement?.parentElement
-      ?.previousElementSibling?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const row = Array.from(tab.containerEl.querySelectorAll('.setting-item'))
+      .find(item => item.querySelector('.setting-item-name')?.textContent === 'Disable Obsidian image selection on click');
+    const imageSelectionToggle = row?.querySelector<HTMLInputElement>('input[type="checkbox"]');
 
     expect(imageSelectionToggle).toBeTruthy();
     Notice.instances.length = 0;

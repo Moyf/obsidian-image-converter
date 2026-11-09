@@ -123,6 +123,20 @@ body.image-converter-disable-native-image-selection:not(.is-mobile)
 	padding: var(--size-4-4);
 }
 
+/* Native subpages are separate from the plugin tab; scope their layout by our groups. */
+.setting-page:has(> .setting-page-content > .image-converter-display-subpage-group),
+.setting-page:has(> .setting-page-content > .image-converter-folder-rules) {
+	container-type: inline-size;
+	container-name: image-converter-page;
+}
+
+.setting-page-content:has(> .image-converter-display-subpage-group),
+.setting-page-content:has(> .image-converter-folder-rules) {
+	min-width: 0;
+	container-type: inline-size;
+	container-name: image-converter-settings;
+}
+
 /* Preserve native group styling; only custom preset rows need the old reset. */
 .image-converter-settings-tab > .setting-item,
 .image-converter-settings-tab .image-converter-global-preset-container .setting-item,
@@ -147,25 +161,6 @@ body.image-converter-disable-native-image-selection:not(.is-mobile)
 	max-width: 100%;
 	container-type: inline-size;
 	container-name: image-converter-presets;
-}
-
-.image-converter-settings-tab .image-converter-image-behavior-group .image-converter-custom-section {
-	padding: 0;
-}
-
-.image-converter-image-behavior-group .image-converter-settings-section {
-	padding: var(--size-4-3);
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.image-converter-settings-tab .image-converter-image-behavior-group .image-converter-settings-section .settings-section-toggle-button {
-	padding: 0;
-	background: transparent;
-	border: none;
-}
-
-.image-converter-image-behavior-group .settings-section-toggle-button .setting-item-info {
-	display: none;
 }
 
 .image-converter-setting-group-heading {
@@ -656,7 +651,7 @@ html[data-theme="dark"] {
 	transition: transform 0.2s ease;
 }
 
-/* Rotate chevron when collapsed */
+/* Switch layouts by the usable content width, not the whole settings window. */
 @container image-converter-presets (max-width: 640px) {
 	.image-converter-global-preset-container {
 		grid-template-columns: minmax(0, 1fr);
@@ -682,184 +677,39 @@ html[data-theme="dark"] {
 }
 
 @container image-converter-settings (max-width: 520px) {
-	.image-converter-preset-form .setting-item {
+	:is(.image-converter-settings-tab, .setting-page-content:has(> .image-converter-display-subpage-group), .setting-page-content:has(> .image-converter-folder-rules)) .setting-item:not(.image-converter-custom-section):not(.image-converter-global-preset-select):not(.setting-item-heading):not(.mod-toggle):not(.mod-navigable) {
 		flex-direction: column;
 		align-items: stretch;
 		gap: var(--size-4-2);
 	}
 
-	.image-converter-preset-form .setting-item-control {
+	:is(.image-converter-settings-tab, .setting-page-content:has(> .image-converter-display-subpage-group), .setting-page-content:has(> .image-converter-folder-rules)) .setting-item-info {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	:is(.image-converter-settings-tab, .setting-page-content:has(> .image-converter-display-subpage-group), .setting-page-content:has(> .image-converter-folder-rules)) .setting-item-control {
 		min-width: 0;
 		max-width: 100%;
 		margin-inline-start: 0;
 		flex-wrap: wrap;
 	}
 
-	.image-converter-preset-form input,
-	.image-converter-preset-form textarea,
-	.image-converter-preset-form select {
+	:is(.image-converter-settings-tab, .setting-page-content:has(> .image-converter-display-subpage-group), .setting-page-content:has(> .image-converter-folder-rules)) :is(input, textarea, select) {
 		min-width: 0;
 		max-width: 100%;
 	}
 
-	.image-converter-preset-form input[type="text"],
-	.image-converter-preset-form textarea {
+	:is(.image-converter-settings-tab, .setting-page-content:has(> .image-converter-display-subpage-group), .setting-page-content:has(> .image-converter-folder-rules)) :is(input[type="text"], textarea) {
 		width: 100%;
 	}
 }
 
-/* --------------- IMAGE ALIGNMENT SETTINGS ------------------------------ */
-/* ----------------------------------------------------------------------- */
-
-/* --- Section Container --- */
-.image-converter-settings-tab .image-alignment-settings-section {
-	display: flex;
-	/* align-items: center; */
-	/* gap: 10px; */
-	/* margin-bottom: 10px; */
-	cursor: pointer;
-	flex-direction: column;
+@container image-converter-page (max-width: 640px) {
+	.setting-page-content {
+		padding-inline: var(--size-4-4);
+	}
 }
-
-/* --- Section Header (Clickable Toggle Area) --- */
-.image-converter-settings-tab
-	.image-alignment-settings-section
-	.settings-section-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	width: 100%;
-	/* padding: 8px 0; */
-}
-
-.image-converter-settings-tab
-	.image-alignment-settings-section
-	.settings-section-title {
-	/* flex-grow: 1; */
-	margin-left: 0.5em;
-	font-weight: 600;
-	margin-bottom: 5px;
-}
-
-.image-converter-settings-tab
-	.image-alignment-settings-section
-	.settings-section-toggle-button {
-	margin-left: auto;
-	margin-right: 0;
-}
-
-/* --- Chevron Icon --- */
-.image-converter-settings-tab
-	.image-alignment-settings-section
-	.settings-section-chevron-icon {
-	margin-right: 5px;
-	transition: transform 0.2s ease;
-}
-
-/* --- HIDE CHEVRON WHEN IMAGE ALIGNMENT IS DISABLED --- */
-.image-converter-settings-tab
-	.image-alignment-settings-section:not(.image-alignment-enabled)
-	.settings-section-chevron-icon {
-	/* Refined selector */
-	display: none;
-	/* Hide chevron when image alignment section is disabled */
-}
-
-/* --- Indentation for Settings within Section --- */
-.image-converter-settings-tab .image-alignment-settings-section .setting-item {
-	padding-left: 1.5em;
-	border-top: none;
-	margin-top: 0 !important;
-	margin-bottom: 0 !important;
-}
-
-/* --- Hide Settings when Section is Collapsed --- */
-.image-converter-settings-tab
-	.image-alignment-settings-section.settings-section-collapsed
-	> *:not(.settings-section-header) {
-	display: none;
-}
-
-.settings-section-clarification-text {
-	margin-left: 19px;
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
-	padding-top: var(--size-4-1);
-	line-height: var(--line-height-tight);
-}
-
-/* ----------------------------------------------------------------------- */
-/* ----------------------------------------------------------------------- */
-
-/* --------- Image Drag & Resize Settings Section --------- */
-
-/* --- Main Container --- */
-.image-drag-resize-settings-section {
-	display: flex;
-	/* align-items: center; */
-	/* gap: 10px; */
-	/* margin-bottom: 10px; */
-	cursor: pointer;
-	flex-direction: column;
-}
-
-/* --- Collapsible Section Header --- */
-.image-drag-resize-settings-section .settings-section-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	width: 100%;
-	/* padding: 8px 0; */
-}
-
-/* --- Section Title --- */
-.image-drag-resize-settings-section .settings-section-title {
-	/* flex-grow: 1; */
-	margin-left: 0.5em;
-	margin-bottom: 5px;
-	font-weight: 600;
-}
-
-/* --- Toggle Switch --- */
-.image-drag-resize-settings-section .settings-section-toggle-button {
-	margin-left: auto;
-	margin-right: 0;
-}
-
-/* --- Chevron Icon --- */
-.image-drag-resize-settings-section .settings-section-chevron-icon {
-	margin-right: 5px;
-	transition: transform 0.2s ease;
-}
-
-/* --- HIDE CHEVRON WHEN IMAGE ALIGNMENT IS DISABLED --- */
-.image-converter-settings-tab
-	.image-drag-resize-settings-section:not(.image-drag-resize-enabled)
-	.settings-section-chevron-icon {
-	/* Refined selector */
-	display: none;
-	/* Hide chevron when image alignment section is disabled */
-}
-
-/* --- Indentation for Settings within Section --- */
-.image-converter-settings-tab
-	.image-drag-resize-settings-section
-	.setting-item {
-	padding-left: 1.5em;
-	border-top: none;
-	margin-top: 0 !important;
-	margin-bottom: 0 !important;
-}
-
-/* --- Hide Settings when Section is Collapsed --- */
-.image-converter-settings-tab
-	.image-drag-resize-settings-section.settings-section-collapsed
-	> *:not(.settings-section-header) {
-	display: none;
-}
-
-/* ----------------------------------------------------------------------- */
-/* ----------------------------------------------------------------------- */
 
 /* --- Hide Tabs and Content --- */
 /* Hide tabs and preset groups when global presets are not visible */
@@ -1273,89 +1123,6 @@ button.image-converter-encoder-detected:hover,
 	min-width: 55px;
 	width: auto;
 }
-
-/* --------------- CAPTIONS SETTINGS ------------------------------ */
-/* ----------------------------------------------------------------------- */
-
-/* --- Section Container --- */
-.image-converter-settings-tab .image-caption-settings-section {
-	display: flex;
-	/* align-items: center; */
-	/* gap: 10px; */
-	/* margin-bottom: 10px; */
-	cursor: pointer;
-	flex-direction: column;
-}
-
-/* --- Section Header (Clickable Toggle Area) --- */
-.image-converter-settings-tab
-	.image-caption-settings-section
-	.settings-section-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	width: 100%;
-	/* padding: 8px 0; */
-}
-
-.image-converter-settings-tab
-	.image-caption-settings-section
-	.settings-section-title {
-	/* flex-grow: 1; */
-	margin-left: 0.5em;
-	font-weight: 600;
-	margin-bottom: 5px;
-}
-
-.image-converter-settings-tab
-	.image-caption-settings-section
-	.settings-section-toggle-button {
-	margin-left: auto;
-	margin-right: 0;
-}
-
-/* --- Chevron Icon --- */
-.image-converter-settings-tab
-	.image-caption-settings-section
-	.settings-section-chevron-icon {
-	margin-right: 5px;
-	transition: transform 0.2s ease;
-}
-
-/* --- HIDE CHEVRON WHEN IMAGE ALIGNMENT IS DISABLED --- */
-.image-converter-settings-tab
-	.image-caption-settings-section:not(.image-caption-enabled)
-	.settings-section-chevron-icon {
-	/* Refined selector */
-	display: none;
-	/* Hide chevron when image alignment section is disabled */
-}
-
-/* --- Indentation for Settings within Section --- */
-.image-converter-settings-tab .image-caption-settings-section .setting-item {
-	padding-left: 1.5em;
-	border-top: none;
-	margin-top: 0 !important;
-	margin-bottom: 0 !important;
-}
-
-/* --- Hide Settings when Section is Collapsed --- */
-.image-converter-settings-tab
-	.image-caption-settings-section.settings-section-collapsed
-	> *:not(.settings-section-header) {
-	display: none;
-}
-
-.settings-section-clarification-text {
-	margin-left: 19px;
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
-	padding-top: var(--size-4-1);
-	line-height: var(--line-height-tight);
-}
-
-/* ----------------------------------------------------------------------- */
-/* ----------------------------------------------------------------------- */
 
 /* --------------- IMAGE CAPTION STYLING ------------------------------ */
 /* Container styling for captioned images */
