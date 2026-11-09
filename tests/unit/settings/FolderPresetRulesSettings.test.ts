@@ -26,6 +26,24 @@ function changeControl(container: HTMLElement, label: string, value: string) {
 }
 
 describe('folder rule settings controls', () => {
+    it('renders the introduction as one setting with a line break in both settings implementations', () => {
+        const { plugin } = createPlugin();
+        const definitions = getFolderPresetRuleDefinitions(plugin, vi.fn());
+        expect(definitions).toHaveLength(2);
+        const intro = definitions[0];
+        const nativeContainer = document.createElement('div');
+        const setting = new Setting(nativeContainer);
+        if ('render' in intro && intro.render) intro.render(setting, new SettingGroup(nativeContainer));
+        expect(nativeContainer.querySelectorAll('.image-converter-folder-rules-intro')).toHaveLength(1);
+        expect(setting.descEl.textContent).toContain('duplicate paths.\nUse /');
+
+        const legacyContainer = document.createElement('div');
+        renderFolderPresetRules(legacyContainer, plugin);
+        const legacyIntro = legacyContainer.querySelector('.image-converter-folder-rules-intro .setting-item-description');
+        expect(legacyContainer.querySelectorAll('.image-converter-folder-rules-intro')).toHaveLength(1);
+        expect(legacyIntro?.textContent).toBe(setting.descEl.textContent);
+    });
+
     it('adds a complete rule through a modal without persisting an incomplete draft', async () => {
         const { plugin, save } = createPlugin();
         const container = document.createElement('div');

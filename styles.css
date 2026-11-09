@@ -181,6 +181,10 @@ body.image-converter-disable-native-image-selection:not(.is-mobile)
 	max-width: 100%;
 }
 
+.image-converter-folder-rules-intro .setting-item-description {
+	white-space: pre-line;
+}
+
 .image-converter-folder-rule-error {
 	color: var(--text-error);
 	font-size: var(--font-ui-small);

@@ -6,6 +6,14 @@ import { createSettingsGroup } from './utils/settingsGroup';
 
 export const FOLDER_RULES_PAGE_NAME = 'Folder-based presets';
 export const FOLDER_RULES_PAGE_DESCRIPTION = 'Choose image import presets by note folder or for external files.';
+const FOLDER_RULES_INTRO = [
+    'Rules apply to pasted and dropped images; the most specific folder wins, and the first enabled rule wins for duplicate paths.',
+    'Use / for all vault notes, or file: for external notes.',
+].join('\n');
+
+function renderFolderRulesIntro(setting: Setting): void {
+    setting.setClass('image-converter-folder-rules-intro').setName('').setDesc(FOLDER_RULES_INTRO);
+}
 
 function getRuleName(rule: FolderPresetRule): string {
     const path = normalizeRuleFolderPath(rule.folderPath);
@@ -90,25 +98,20 @@ export function getFolderPresetRuleDefinitions(plugin: ImageConverterPlugin, onC
         })),
     };
 
-    const descriptions = [
-        'Rules apply to pasted and dropped images; the most specific folder wins, and the first enabled rule wins for duplicate paths.',
-        'Use / for all vault notes, or file: for external notes.',
-    ];
     return [
-        ...descriptions.map(desc => ({
+        {
             name: '',
-            desc,
+            desc: FOLDER_RULES_INTRO,
             searchable: false,
-            render: (setting: Setting) => { setting.setName('').setDesc(desc); },
-        })),
+            render: renderFolderRulesIntro,
+        },
         list,
     ];
 }
 
 export function renderFolderPresetRules(container: HTMLElement, plugin: ImageConverterPlugin): void {
     const section = container.createDiv('image-converter-folder-rules');
-    new Setting(section).setDesc('Rules apply to pasted and dropped images. The most specific folder wins; duplicate paths use the first enabled rule.');
-    new Setting(section).setDesc('Use / for all vault notes, or file: for external notes.');
+    renderFolderRulesIntro(new Setting(section));
 
     const rules = plugin.settings.folderPresetRules ??= [];
     const group = createSettingsGroup(section, 'Folder rules', 'image-converter-folder-rule-list');
