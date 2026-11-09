@@ -42,7 +42,7 @@ import { ImageProcessingPauseState } from "./ImageProcessingPauseState";
 import { resolveSettingsForNote } from './FolderPresetRules';
 
 export default class ImageConverterPlugin extends Plugin {
-    settings!: ImageConverterSettings;
+    declare settings: ImageConverterSettings;
 
     // Check supported image formats
     supportedImageFormats!: SupportedImageFormats;

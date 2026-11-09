@@ -49,6 +49,44 @@ describe('folder-based presets', () => {
         expect(resolveSettingsForNote(settings, 'Projects/Sub/Note.md').selectedGlobalPreset).toBe('Project profile');
     });
 
+    it.each([
+        'file:D:/Apps/Su/读我.md',
+        'file:D:\\Apps\\Su\\Readme.md',
+        'file:///D:/Apps/Su/Readme.md',
+        'file:/home/user/Readme.md',
+    ])('matches external notes independently of vault rules: %s', notePath => {
+        const settings = settingsWithRules();
+        settings.globalPresets.push({ ...settings.globalPresets[0], name: 'Vault fallback' });
+        settings.folderPresetRules = [
+            { folderPath: '/', globalPreset: 'Vault fallback', enabled: true },
+            { folderPath: 'file:', globalPreset: 'Project profile', enabled: true },
+        ];
+        expect(resolveSettingsForNote(settings, notePath).selectedGlobalPreset).toBe('Project profile');
+        expect(resolveSettingsForNote(settings, 'Projects/Note.md').selectedGlobalPreset).toBe('Vault fallback');
+        expect(resolveSettingsForNote(settings, 'Note.md').selectedGlobalPreset).toBe('Vault fallback');
+    });
+
+    it('does not apply a vault fallback when the external rule is disabled or missing', () => {
+        const settings = settingsWithRules();
+        settings.folderPresetRules = [
+            { folderPath: '/', globalPreset: 'Project profile', enabled: true },
+            { folderPath: 'file:', globalPreset: 'Project profile', enabled: false },
+        ];
+        expect(resolveSettingsForNote(settings, 'file:D:/Apps/Readme.md').selectedGlobalPreset).toBe(settings.selectedGlobalPreset);
+        settings.folderPresetRules[1].enabled = true;
+        settings.folderPresetRules[1].globalPreset = 'Missing';
+        expect(resolveSettingsForNote(settings, 'file:D:/Apps/Readme.md').selectedGlobalPreset).toBe(settings.selectedGlobalPreset);
+    });
+
+    it('preserves the first enabled external rule when paths are duplicated', () => {
+        const settings = settingsWithRules();
+        settings.folderPresetRules = [
+            { folderPath: 'file:', globalPreset: 'Project profile', enabled: true },
+            { folderPath: 'file:', globalPreset: settings.globalPresets[0].name, enabled: true },
+        ];
+        expect(resolveSettingsForNote(settings, 'file:D:/Readme.md').selectedGlobalPreset).toBe('Project profile');
+    });
+
     it.each(['', '  ', '../Projects', 'Projects/../Other', 'C:/Projects'])('ignores an invalid or incomplete folder: %s', folderPath => {
         const settings = settingsWithRules();
         settings.folderPresetRules![0].folderPath = folderPath;
@@ -104,5 +142,12 @@ describe('normalizeRuleFolderPath', () => {
         expect(normalizeRuleFolderPath('.')).toBe('');
         expect(normalizeRuleFolderPath('A//B/')).toBe('A/B');
         expect(normalizeRuleFolderPath('A/./B')).toBeNull();
+    });
+
+    it('accepts the external-files selector without accepting arbitrary colon paths', () => {
+        expect(normalizeRuleFolderPath(' file: ')).toBe('file:');
+        expect(normalizeRuleFolderPath('file:D:/Apps')).toBeNull();
+        expect(normalizeRuleFolderPath('https:')).toBeNull();
+        expect(normalizeRuleFolderPath('file:\0')).toBeNull();
     });
 });

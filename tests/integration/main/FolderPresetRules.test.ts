@@ -102,4 +102,27 @@ describe('folder preset rules integration', () => {
     expect(Array.from(new Uint8Array(storedBytes))).toEqual(bytes);
     expect((plugin as any).imageProcessor.processImage).not.toHaveBeenCalled();
   });
+
+  it.each(['editor-paste', 'editor-drop'])('applies the external file preset for %s without using a vault fallback', async eventName => {
+    const { app, plugin, getHandler, editor } = await makeConfiguredPlugin();
+    const externalNote = fakeTFile({ path: 'file:D:/Apps/Su/读我.md', name: '读我.md', extension: 'md' });
+    const settings = (plugin as any).settings;
+    settings.folderPresets.push({ name: 'External assets', type: 'CUSTOM', customTemplate: 'ExternalAssets' });
+    settings.globalPresets[0].folderPreset = 'External assets';
+    settings.folderPresetRules = [
+      { folderPath: '/', globalPreset: 'Folder B', enabled: true },
+      { folderPath: 'file:', globalPreset: 'Folder A', enabled: true },
+    ];
+    const file = makeFile('external.png');
+    const event = {
+      defaultPrevented: false,
+      clipboardData: { items: [{ kind: 'file', type: file.type, getAsFile: () => file }] },
+      dataTransfer: { files: [file] },
+      preventDefault: vi.fn(),
+    };
+    await getHandler(eventName)(event, editor, { file: externalNote });
+    expect(app.vault.createBinary).toHaveBeenCalledWith('ExternalAssets/external.webp', expect.any(ArrayBuffer));
+    expect((plugin as any).imageProcessor.processImage).toHaveBeenCalled();
+    expect(settings.selectedGlobalPreset).toBe('WebP 75');
+  });
 });

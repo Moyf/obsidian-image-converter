@@ -113,15 +113,108 @@ body.image-converter-disable-native-image-selection:not(.is-mobile)
 	/* Reserve space for scrollbar to prevent content jumping when it appears/disappears */
 }
 
-/*
- * Reset Obsidian 1.11+ default .setting-item backgrounds
- * Obsidian 1.11 introduced default backgrounds on setting-item elements.
- * This reset ensures all settings within the plugin's tab have transparent backgrounds.
- */
-.image-converter-settings-tab .setting-item {
+/* Preserve native group styling; only custom preset rows need the old reset. */
+.image-converter-settings-tab > .setting-item,
+.image-converter-settings-tab .image-converter-global-preset-container .setting-item,
+.image-converter-settings-tab .image-converter-preset-form .setting-item {
 	background: transparent;
 	margin-bottom: 0;
 	padding: var(--size-4-3);
+}
+
+.image-converter-settings-tab .image-converter-custom-section {
+	display: block;
+	padding: 0;
+}
+
+.image-converter-custom-section > .setting-item-info,
+.image-converter-custom-section > .setting-item-control {
+	display: none;
+}
+
+.image-converter-section-content {
+	min-width: 0;
+}
+
+.image-converter-settings-tab .image-converter-image-behavior-group .image-converter-custom-section {
+	padding: 0;
+}
+
+.image-converter-image-behavior-group .image-converter-settings-section {
+	padding: var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.image-converter-settings-tab .image-converter-image-behavior-group .image-converter-settings-section .settings-section-toggle-button {
+	padding: 0;
+	background: transparent;
+	border: none;
+}
+
+.image-converter-image-behavior-group .settings-section-toggle-button .setting-item-info {
+	display: none;
+}
+
+.image-converter-setting-group-heading {
+	margin-block: var(--size-4-4) var(--size-4-2);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+.image-converter-setting-group-list {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+}
+
+.image-converter-folder-rule-modal .setting-item-control input[type="text"],
+.image-converter-folder-rule-modal .setting-item-control select {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.image-converter-folder-rule-error {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
+.image-converter-folder-rule-row .setting-item-icon {
+	display: none;
+}
+
+.image-converter-folder-rule-row .setting-item-info {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.image-converter-folder-rule-row.image-converter-folder-rule-row {
+	padding: var(--size-4-2) var(--size-4-4);
+}
+
+.image-converter-folder-rule-error:empty {
+	display: none;
+}
+
+.image-converter-folder-rule-actions {
+	border-top: none;
+}
+
+@media (max-width: 480px) {
+	.image-converter-folder-rule-modal .setting-item {
+		flex-direction: column;
+		align-items: stretch;
+		gap: var(--size-4-2);
+	}
+
+	.image-converter-folder-rule-modal .setting-item-control {
+		margin-inline-start: 0;
+		justify-content: flex-end;
+	}
+
+	.image-converter-folder-rule-modal input[type="text"],
+	.image-converter-folder-rule-modal select {
+		width: 100%;
+	}
 }
 
 /* ------------------- Tabs ------------------------------ */
