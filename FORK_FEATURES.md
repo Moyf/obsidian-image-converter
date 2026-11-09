@@ -24,6 +24,10 @@ Unmatched notes use the global selection. With rules configured, import dialogs 
 
 Preset controls adapt to the settings content width: narrow windows stack the header and selector, wrap all five category labels, and use fewer card columns. **Image import** groups folder rules and paste/drop behavior. **Image display & interaction** contains separate **Image alignment**, **Drag & scroll resize**, and **Captions** subpages, each with its enable toggle at the top. All existing values are preserved; older Obsidian versions keep equivalent subpages with a Back button.
 
+## Preset card fixes
+
+Preset cards stay visible and usable while editing, and selecting a card does not rebuild the edit form. When a global preset is selected, clicking a category card also saves that category into the selected combination, so switching away and back keeps the change. Other global presets and categories are unchanged; choosing `None` leaves saved combinations untouched.
+
 ## Local development
 
 Install locked dependencies with `npm ci`. Set `VAULT_PATH` in your environment or a local `.env` file (see `.env.example`), then run `npm run build:local`. Relative paths in `.env` are resolved from that file's directory; the nearest matching `.env` in the repository or its parents is used. Build outputs are in `dist/`.
@@ -38,5 +42,6 @@ Local deployment copies `main.js`, `manifest.json`, and `styles.css` and creates
 - 文件夹配置：先把所需的存储位置、命名、压缩、链接和尺寸预设保存成全局预设，再打开 `Image import → Folder-based presets`，点击 `Add rule`，在弹窗中填写笔记所在文件夹、选择全局预设并保存。已有规则在列表中启停、编辑、删除和排序。
 - 规则包含子文件夹，匹配区分大小写并按文件夹边界判断；路径最具体的规则优先，同路径取第一条启用规则。路径建议中「外部文件（`file:`）」排在 `/` 前。`/` 只匹配库内笔记；`file:` 匹配所有路径以 `file:` 开头的外部笔记，例如 `file:D:/Apps/Su/读我.md`，不会被库内规则覆盖。空路径、越级路径和已删除的全局预设会被忽略，仍可匹配父级规则；分类预设缺失时回退到该分类的全局选择。
 - 未匹配的笔记使用全局配置。配置规则后，每次导入弹窗使用独立快照，不跨导入记忆临时模板调整；修改命名预设请在设置页进行。删除全部规则后恢复原有弹窗记忆行为。手动批处理使用其显式配置；常驻暂停优先于文件夹规则。
+- 预设卡片：编辑时不再变空白，切换卡片不会重建编辑表单。选中全局预设后，点击分类卡片会同步保存到当前组合，切换回来仍保留；其他组合和分类不受影响，选择 `None` 时不会修改已保存组合。
 - 设置布局：窄窗口按内容区宽度自动调整首行、五个完整标签和卡片列数。主页面分为 `Image import`（图片导入）和 `Image display & interaction`（图片显示与交互）；对齐、拖拽与滚轮缩放、字幕各有独立子页，启用开关放在子页顶部。已有配置不变，旧版 Obsidian 使用带返回按钮的等效子页。
 - 本地开发：执行 `npm ci`，按 `.env.example` 设置 `VAULT_PATH`，再执行 `npm run build:local`。产物位于 `dist/`，部署会保留原有插件设置，并创建 `.hotreload` 标记。
