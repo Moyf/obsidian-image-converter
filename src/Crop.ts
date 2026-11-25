@@ -1,4 +1,8 @@
 import { App, Component, Modal, Notice, TFile } from 'obsidian';
+import { transformCanvas } from './utils/canvasTransform';
+import { transferMetadata } from './metadata/transferMetadata';
+import { MetadataMode } from './metadata/types';
+import { refreshImageInView } from './utils/refreshImageInView';
 
 
 type SupportedImageFormat = 'jpeg' | 'png' | 'webp' | 'avif';
@@ -24,12 +28,12 @@ export class Crop extends Modal {
 
     private imageFile: TFile;
     private originalArrayBuffer: ArrayBuffer | null = null;
-    private cropContainer: HTMLDivElement;
-    private selectionArea: HTMLDivElement;
+    private cropContainer!: HTMLDivElement;
+    private selectionArea!: HTMLDivElement;
     private isDrawing = false;
     private startX = 0;
     private startY = 0;
-    private originalImage: HTMLImageElement;
+    private originalImage!: HTMLImageElement;
     private imageScale: { x: number, y: number } = { x: 1, y: 1 };
 
 	private currentAspectRatio: number | null = null;
@@ -49,7 +53,7 @@ export class Crop extends Modal {
 	private currentPanX = 0;
 	private currentPanY = 0;
 
-	constructor(app: App, imageFile: TFile) {
+	constructor(app: App, imageFile: TFile, private metadataMode: MetadataMode) {
 		super(app);
 		this.imageFile = imageFile;
 		this.componentContainer.load();
@@ -128,7 +132,6 @@ export class Crop extends Modal {
         });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Modal.onOpen() expects void but async is needed for image loading
     async onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -809,25 +812,12 @@ export class Crop extends Modal {
 			originalCtx.drawImage(this.originalImage, 0, 0);
 	
 			// Step 1: Apply Rotation and Flipping to the ENTIRE image
-			const rotatedCanvas = document.createElement('canvas');
-			const rotatedCtx = rotatedCanvas.getContext('2d');
-			if (!rotatedCtx) {
-				throw new Error('Could not get canvas context for rotation');
-			}
-	
-			// Calculate dimensions after rotation
-			rotatedCanvas.width = Math.abs(this.currentRotation) === 90 || Math.abs(this.currentRotation) === 270
-				? originalCanvas.height
-				: originalCanvas.width;
-			rotatedCanvas.height = Math.abs(this.currentRotation) === 90 || Math.abs(this.currentRotation) === 270
-				? originalCanvas.width
-				: originalCanvas.height;
-	
-			rotatedCtx.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
-			rotatedCtx.rotate((this.currentRotation * Math.PI) / 180);
-			rotatedCtx.scale(this.isFlippedX ? -1 : 1, this.isFlippedY ? -1 : 1);
-			rotatedCtx.drawImage(originalCanvas, -originalCanvas.width / 2, -originalCanvas.height / 2);
-	
+			const rotatedCanvas = transformCanvas(originalCanvas, {
+				degrees: this.currentRotation,
+				flipX: this.isFlippedX,
+				flipY: this.isFlippedY
+			});
+
 			// Step 2: Apply Cropping to the Rotated Image
 			const finalCanvas = document.createElement('canvas');
 			const finalCtx = finalCanvas.getContext('2d');
@@ -942,21 +932,13 @@ export class Crop extends Modal {
 			if (!arrayBuffer) {
 				throw new Error('Failed to create array buffer from blob');
 			}
-	
-			await this.app.vault.modifyBinary(this.imageFile, arrayBuffer);
+			const withMetadata = await transferMetadata(new Blob([this.originalArrayBuffer!]), arrayBuffer, true, this.metadataMode);
+			await this.app.vault.modifyBinary(this.imageFile, withMetadata);
 	
 			new Notice('Image saved successfully');
-	
-			const leaf = this.app.workspace.getMostRecentLeaf();
-			if (leaf) {
-				const currentState = leaf.getViewState();
-				await leaf.setViewState({
-					type: 'empty',
-					state: {}
-				});
-				await leaf.setViewState(currentState);
-			}
-	
+
+			refreshImageInView(this.app, this.imageFile);
+
 			this.close();
 	
 	} catch (error) {

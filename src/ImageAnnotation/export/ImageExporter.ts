@@ -1,7 +1,10 @@
-import { App, Notice, TFile, MarkdownView } from 'obsidian';
+import { App, Notice, TFile } from 'obsidian';
 import { Canvas, FabricImage, ImageFormat, type TMat2D } from 'fabric';
 import { ExtendedImageFormat } from '../types';
 import mime from '../../mime.min.js';
+import { transferMetadata } from '../../metadata/transferMetadata';
+import { MetadataMode } from '../../metadata/types';
+import { refreshImageInView } from '../../utils/refreshImageInView';
 
 function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
     try {
@@ -58,8 +61,18 @@ function getFabricImageElement(image: unknown): unknown {
 }
 
 export class ImageExporter {
-    constructor(private app: App) {}
+    constructor(private app: App, private metadataMode: MetadataMode) {}
 
+    /**
+     * Saves the annotated image over the original file, at full quality
+     * (quality 1).
+     *
+     * The conversion preset's quality is not used here on purpose. Annotating
+     * should only add the annotations, and each lossy save would lower the
+     * quality again. To compress or convert an annotated image, use
+     * "Convert/compress..." in the image's right-click menu, or copy the
+     * image and paste it, so the paste and drop presets apply.
+     */
     async save(canvas: Canvas, file: TFile): Promise<boolean> {
         if (!canvas) return false;
 
@@ -88,7 +101,10 @@ export class ImageExporter {
             const objects = canvas.getObjects();
             if (objects.length === 0) return false;
 
-            const backgroundImage = objects.find(obj => obj instanceof FabricImage) as FabricImage | undefined;
+            // The background is always the first object. Mosaic regions are FabricImages too,
+            // so searching by type could pick one of them instead.
+            const [firstObject] = objects;
+            const backgroundImage = firstObject instanceof FabricImage ? firstObject : undefined;
 
             canvas.renderAll();
             await new Promise(resolve => setTimeout(resolve, 50));
@@ -96,9 +112,9 @@ export class ImageExporter {
             const bounds = this.calculateBounds(canvas, backgroundImage);
             const { minX, minY, finalWidth, finalHeight, scaleToOriginal } = bounds;
 
-            const currentVPT = (Array.isArray(canvas.viewportTransform)
+            const currentVPT: TMat2D = Array.isArray(canvas.viewportTransform)
                 ? [...canvas.viewportTransform]
-                : [1, 0, 0, 1, 0, 0]) as TMat2D;
+                : [1, 0, 0, 1, 0, 0];
 
             canvas.setViewportTransform([1, 0, 0, 1, 0, 0] as TMat2D);
             if (typeof canvas.setZoom === 'function') {
@@ -142,11 +158,13 @@ export class ImageExporter {
             canvas.setViewportTransform(currentVPT);
             canvas.renderAll();
 
-            await this.app.vault.modifyBinary(file, arrayBuffer);
+            const original = await this.app.vault.readBinary(file);
+            const withMetadata = await transferMetadata(new Blob([original]), arrayBuffer, true, this.metadataMode);
+            await this.app.vault.modifyBinary(file, withMetadata);
 
             new Notice('Image saved successfully');
 
-            await this.refreshActiveView();
+            refreshImageInView(this.app, file);
 
             canvas.preserveObjectStacking = originalStacking;
             canvas.requestRenderAll();
@@ -388,22 +406,5 @@ export class ImageExporter {
             console.debug('Native canvas fallback failed', e);
         }
         return null;
-    }
-
-    private async refreshActiveView(): Promise<void> {
-        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeView) return;
-
-        const leaf = this.app.workspace.getMostRecentLeaf();
-        if (leaf) {
-            const currentState = leaf.getViewState();
-
-            await leaf.setViewState({
-                type: 'empty',
-                state: {}
-            });
-
-            await leaf.setViewState(currentState);
-        }
     }
 }

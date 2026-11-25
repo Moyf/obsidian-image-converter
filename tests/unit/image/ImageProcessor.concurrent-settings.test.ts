@@ -51,7 +51,10 @@ describe('ImageProcessor concurrent settings isolation', () => {
       ['C:/tools/first.exe', '60-70'],
       ['D:/tools/second.exe', '80-90'],
     ]);
-    expect(getMimeType).toHaveBeenCalledTimes(2);
+    // PNGQUANT without resizing detects MIME for conversion and EXIF orientation.
+    expect(getMimeType.mock.calls.map(([file]) => (file as File).name).sort()).toEqual([
+      'first.png', 'first.png', 'second.png', 'second.png',
+    ]);
   });
 
   it('releases the conversion lock when processImageHelper rejects', async () => {

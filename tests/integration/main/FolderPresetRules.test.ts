@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import ImageConverterPlugin from '../../../src/main';
 import { fakeApp, fakeVault, fakeTFile, fakePluginManifest } from '../../factories/obsidian';
+import { buildWebpLossy } from '../../factories/containers/webp';
 
 function makeFile(name: string, bytes = [1, 2, 3]): File {
   return new File([new Uint8Array(bytes)], name, { type: 'image/png' });
@@ -36,7 +37,10 @@ async function makeConfiguredPlugin() {
       conversionPreset: 'None', linkFormatPreset: 'Default (Wikilink, Shortest)', resizePreset: 'Default (No Resize)',
     },
   ];
-  (plugin as any).imageProcessor = { processImage: vi.fn(async () => new Uint8Array([9, 9, 9]).buffer) };
+  (plugin as any).imageProcessor = {
+    processImage: vi.fn(async (file: File, format: string) =>
+      format === 'WEBP' ? Uint8Array.from(buildWebpLossy()).buffer : file.arrayBuffer()),
+  };
   (plugin as any).linkFormatter = { formatLink: vi.fn(async () => '![](/mock)') };
   (plugin as any).showSizeComparisonNotification = vi.fn();
 
@@ -85,7 +89,7 @@ describe('folder preset rules integration', () => {
   });
 
   it('keeps original extension and bytes for one-shot paste under a folder rule', async () => {
-    const { app, plugin, noteB, getHandler, editor } = await makeConfiguredPlugin();
+    const { app, plugin, noteA, getHandler, editor } = await makeConfiguredPlugin();
     const bytes = [137, 80, 78, 71, 13, 10, 26, 10];
     const file = makeFile('original.png', bytes);
     (plugin as any).imageProcessingPauseState.armSkipNextPaste();
@@ -95,10 +99,20 @@ describe('folder preset rules integration', () => {
       preventDefault: vi.fn(),
     };
 
-    await getHandler('editor-paste')(event, editor, { file: noteB });
+    const paste = getHandler('editor-paste');
+    const spreadsheetEvent = {
+      ...event,
+      clipboardData: { ...event.clipboardData, getData: () => '<table></table>' },
+      preventDefault: vi.fn(),
+    };
+    await paste(spreadsheetEvent, editor, { file: noteA });
+    expect(spreadsheetEvent.preventDefault).not.toHaveBeenCalled();
+    expect(app.vault.createBinary).not.toHaveBeenCalled();
+
+    await paste(event, editor, { file: noteA });
 
     const [path, storedBytes] = (app.vault.createBinary as any).mock.calls[0];
-    expect(path).toBe('Articles/B/original.png');
+    expect(path).toBe('Articles/A/original.png');
     expect(Array.from(new Uint8Array(storedBytes))).toEqual(bytes);
     expect((plugin as any).imageProcessor.processImage).not.toHaveBeenCalled();
   });

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { FileSystemAdapter, type TFile } from 'obsidian';
 import { FolderAndFilenameManagement } from '../../../src/FolderAndFilenameManagement';
 import { VariableProcessor } from '../../../src/VariableProcessor';
@@ -204,6 +204,46 @@ describe('FolderAndFilenameManagement destination resolution', () => {
     expect(res.destinationPath).toBe('attachments');
   });
 
+  it('3.6 DEFAULT uses the folder of FileManager.getAvailablePathForAttachment, so attachment plugins apply', async () => {
+    const { app, ffm } = makeDepsDest({ attachmentFolderPath: 'attachments' });
+    const getAvailablePathForAttachment = vi.fn(async () => 'Notes/Topic/Active.assets/Pasted image 1.webp');
+    app.fileManager.getAvailablePathForAttachment = getAvailablePathForAttachment;
+    const file = new File([new Uint8Array([1])], 'Pasted image.png', { type: 'image/png' });
+    const conv: ConversionPreset = { ...DEFAULT_SETTINGS.conversionPresets[0], outputFormat: 'WEBP' } as any;
+    const fname: FilenamePreset = { name: 'Custom', customTemplate: '{imagename}', skipRenamePatterns: '', conflictResolution: 'reuse' };
+    const folder: FolderPreset = { type: 'DEFAULT', name: 'Default' };
+    const res = await ffm.determineDestination(file, active as any, conv, fname, folder);
+    expect(getAvailablePathForAttachment).toHaveBeenCalledWith('Pasted image.webp', 'Notes/Topic/Active.md');
+    expect(res.destinationPath).toBe('Notes/Topic/Active.assets');
+    // The file name still comes from the filename preset, not from the API's answer
+    expect(res.newFilename).toBe('Pasted image.webp');
+  });
+
+  it('3.7 DEFAULT maps an API answer in the vault root to "/"', async () => {
+    const { app, ffm } = makeDepsDest({ attachmentFolderPath: 'attachments' });
+    app.fileManager.getAvailablePathForAttachment = vi.fn(async () => 'img.png');
+    const file = new File([new Uint8Array([1])], 'img.png', { type: 'image/png' });
+    const conv: ConversionPreset = { ...DEFAULT_SETTINGS.conversionPresets[0] } as any;
+    const fname: FilenamePreset = { name: 'Custom', customTemplate: '{imagename}', skipRenamePatterns: '', conflictResolution: 'reuse' };
+    const folder: FolderPreset = { type: 'DEFAULT', name: 'Default' };
+    const res = await ffm.determineDestination(file, active as any, conv, fname, folder);
+    expect(res.destinationPath).toBe('/');
+  });
+
+  it('3.8 DEFAULT falls back to attachmentFolderPath when the API throws', async () => {
+    const { app, ffm } = makeDepsDest({ attachmentFolderPath: './assets' });
+    app.fileManager.getAvailablePathForAttachment = vi.fn(async () => { throw new Error('boom'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const file = new File([new Uint8Array([1])], 'img.png', { type: 'image/png' });
+    const conv: ConversionPreset = { ...DEFAULT_SETTINGS.conversionPresets[0] } as any;
+    const fname: FilenamePreset = { name: 'Custom', customTemplate: '{imagename}', skipRenamePatterns: '', conflictResolution: 'reuse' };
+    const folder: FolderPreset = { type: 'DEFAULT', name: 'Default' };
+    const res = await ffm.determineDestination(file, active as any, conv, fname, folder);
+    expect(res.destinationPath).toBe('Notes/Topic/assets');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('3.12 combinePath normalizes and handles root base', () => {
     const { ffm } = makeDepsDest();
     expect(ffm.combinePath('/', 'file.png')).toBe('file.png');
@@ -295,12 +335,12 @@ describe('FolderAndFilenameManagement.getImagePath', () => {
     expect(ffm.getImagePath(img)).toBe(image.path);
   });
 
-  it('resolves real Obsidian app:// resource URLs with query to vault path', () => {
+  it('resolves real Obsidian app:// resource URLs with query to vault path', () => withPlatform('linux', () => {
     const basePath = '/home/user/Vault';
     const { ffm, image } = makeSutImagePath({ basePath });
     const img = makeImg(makeRuntimeAppUrl(image.path, basePath, 123));
     expect(ffm.getImagePath(img)).toBe(image.path);
-  });
+  }));
 
   it('resolves absolute app:// OS path under basePath on Windows', async () => {
     await withPlatform('win32', () => {
@@ -321,7 +361,7 @@ describe('FolderAndFilenameManagement.getImagePath', () => {
     expect(ffm.getImagePath(img)).toBe(image.path);
   });
 
-  it('resolves real Obsidian app:// resource URLs for root-level files', () => {
+  it('resolves real Obsidian app:// resource URLs for root-level files', () => withPlatform('linux', () => {
     const basePath = '/home/user/Vault';
     const rootImage = fakeTFile({
       path: 'Screenshot 2026-05-17 111424.png',
@@ -331,14 +371,14 @@ describe('FolderAndFilenameManagement.getImagePath', () => {
     const { ffm } = makeSutImagePath({ basePath, extraFiles: [rootImage] });
     const img = makeImg(makeRuntimeAppUrl(rootImage.path, basePath, 1779014495226));
     expect(ffm.getImagePath(img)).toBe(rootImage.path);
-  });
+  }));
 
-  it('handles Unicode filenames and percent-decoding for real Obsidian app:// resource URLs', () => {
+  it('handles Unicode filenames and percent-decoding for real Obsidian app:// resource URLs', () => withPlatform('linux', () => {
     const basePath = '/home/user/Vault';
     const { ffm, unicode } = makeSutImagePath({ basePath, withUnicode: true });
     const img = makeImg(makeRuntimeAppUrl(unicode.path, basePath, 456));
     expect(ffm.getImagePath(img)).toBe(unicode.path);
-  });
+  }));
 
   it('returns null when path cannot be resolved', () => {
     const { ffm } = makeSutImagePath();
@@ -535,6 +575,20 @@ describe('FolderAndFilenameManagement — Platform/Security (Phase 9)', () => {
     expect(out).toBe('output/name.png');
   });
 
+  it.each([
+    // [converted name, original name, expected]
+    ['x.webp', 'x.png', 'x.png'],
+    ['note-20260101.jpeg', 'IMG_0001.PNG', 'note-20260101.png'],
+    ['a.b.webp', 'photo.jpg', 'a.b.jpg'],
+    ['x.jpeg', 'x.jpg', 'x.jpg'],
+    ['x.png', 'x.png', 'x.png'],
+    ['x.webp', 'no-extension', 'x.webp'],
+  ])('Given converted name %s and original %s, When the original is saved, Then its name is %s', (converted, original, expected) => {
+    const { ffm } = makeFFMGeneric();
+    const file = new File([new Uint8Array([1])], original, { type: 'image/png' });
+    expect(ffm.getFilenameForOriginal(converted, file)).toBe(expected);
+  });
+
   it('26.6 Very long filenames: sanitizeFilename truncates base and preserves extension', () => {
     const { ffm } = makeFFMGeneric();
     const longBase = 'A'.repeat(400);
@@ -556,13 +610,13 @@ describe('FolderAndFilenameManagement — Platform/Security (Phase 9)', () => {
     expect(result).toBe('projects/assets/images/final');
   });
 
-  it('25.3 Linux real Obsidian app:// absolute path under base → vault-relative with POSIX separators', () => {
+  it('25.3 Linux real Obsidian app:// absolute path under base → vault-relative with POSIX separators', () => withPlatform('linux', () => {
     const basePath = '/home/user/Vault';
     const appImage = fakeTFile({ path: 'Assets/img x.png', name: 'img x.png', extension: 'png' });
     const { ffm } = makeSutImagePath({ basePath, extraFiles: [appImage] });
     const img = makeImg(makeRuntimeAppUrl(appImage.path, basePath, 789));
     expect(ffm.getImagePath(img)).toBe(appImage.path);
-  });
+  }));
 
   it('27.1 Path traversal prevention: .. segments and leading / are normalized away', async () => {
     installMomentStub();

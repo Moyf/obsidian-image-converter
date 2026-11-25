@@ -501,6 +501,7 @@ describe('Settings defaults, global preset application, and field constraints (1
     const displayGroup = tab.containerEl.querySelector('.image-converter-image-display-group')!;
     expect(importGroup.textContent).toContain('Folder-based presets');
     expect(importGroup.textContent).toContain('Show window');
+    expect(importGroup.textContent).toContain('Image metadata');
     expect(importGroup.textContent).not.toContain('Right-click menu');
     expect(displayGroup.textContent).toContain('Right-click menu');
     expect(displayGroup.textContent).toContain('Image alignment');
@@ -522,6 +523,13 @@ describe('Settings defaults, global preset application, and field constraints (1
     const definitions = tab.getSettingDefinitions();
     const group = definitions.find(item => 'type' in item && item.type === 'group');
     expect(group && 'items' in group && group.items?.some(item => 'type' in item && item.type === 'page' && item.name === 'Folder-based presets')).toBe(true);
+    expect(group && 'items' in group && group.items).toContainEqual(expect.objectContaining({
+      name: 'Image metadata',
+      control: expect.objectContaining({
+        key: 'metadataMode',
+        options: expect.objectContaining({ 'strip-location': 'Keep all except location' }),
+      }),
+    }));
     const presetSetting = new Setting(tab.containerEl);
     const presetDefinition = definitions[0];
     if ('render' in presetDefinition && presetDefinition.render) {
@@ -801,6 +809,35 @@ describe('Settings defaults, global preset application, and field constraints (1
         timeout: 5000
       });
     });
+  });
+
+  it('Given the metadata dropdown, When an option is chosen, Then the setting is saved', async () => {
+    tab.display();
+    const save = vi.spyOn(plugin, 'saveSettings').mockResolvedValue();
+
+    const metadataSelect = Array.from(tab.containerEl.querySelectorAll('select'))
+      .find((select) => select.querySelector('option[value="strip-location"]'));
+
+    expect(metadataSelect).toBeTruthy();
+    expect(metadataSelect!.value).toBe('keep-all');
+    expect(Array.from(metadataSelect!.options).map((option) => option.value)).toEqual(['keep-all', 'strip-location', 'strip-all']);
+
+    changeSelect(metadataSelect!, 'strip-all');
+
+    await vi.waitFor(() => {
+      expect(plugin.settings.metadataMode).toBe('strip-all');
+      expect(save).toHaveBeenCalled();
+    });
+  });
+
+  it('Given settings saved before the metadata setting existed, When loadSettings, Then all metadata is kept', async () => {
+    const app2 = makeAppWithStorage();
+    const plugin2 = new ImageConverterPlugin(app2, { id: 'image-converter' } as any);
+    vi.spyOn(plugin2 as any, 'loadData').mockResolvedValue({ selectedFolderPreset: 'Root folder' });
+
+    await plugin2.loadSettings();
+
+    expect(plugin2.settings.metadataMode).toBe('keep-all');
   });
 
   it('11.9 Safe defaults on missing fields: shallow merge preserves defaults for unspecified fields', async () => {

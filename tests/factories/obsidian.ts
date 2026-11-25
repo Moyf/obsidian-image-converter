@@ -17,7 +17,7 @@ function makeObsidianFileHref(absolutePath: string): string {
     return new URL(`file:${absolutePath}`).href;
   }
 
-  return pathToFileURL(absolutePath).href;
+  return pathToFileURL(absolutePath, { windows: false }).href;
 }
 
 export function makeObsidianAppResourcePath(

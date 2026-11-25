@@ -43,6 +43,19 @@ export function getImageImportSettingDefinitions(plugin: ImageConverterPlugin): 
                 });
             },
         },
+        {
+            name: 'Image metadata',
+            desc: 'Choose which EXIF metadata to keep when processing images. Files left unchanged keep their metadata.',
+            control: {
+                type: 'dropdown',
+                key: 'metadataMode',
+                options: Object.fromEntries([
+                    ['keep-all', 'Keep all'],
+                    ['strip-location', 'Keep all except location'],
+                    ['strip-all', 'Remove all'],
+                ]),
+            },
+        },
     ];
 }
 

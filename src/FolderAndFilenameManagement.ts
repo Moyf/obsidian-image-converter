@@ -1,6 +1,6 @@
 // FolderAndFilenameManagement.ts
 import { TFile, TFolder, App, normalizePath, Notice, FileSystemAdapter, Platform } from "obsidian";
-// eslint-disable-next-line import/no-nodejs-modules -- Required for path manipulation; Obsidian runs on Electron with Node.js support
+// Required for path manipulation; Obsidian runs on Electron with Node.js support
 import * as path from 'path';
 import {
     ImageConverterSettings,
@@ -80,7 +80,8 @@ export class FolderAndFilenameManagement {
         const destinationDir = await this.getDestinationDirectory(
             selectedFolderPreset,
             file,
-            activeFile
+            activeFile,
+            selectedConversionPreset
         );
 
         let newFilename: string;
@@ -124,13 +125,18 @@ export class FolderAndFilenameManagement {
     private async getDestinationDirectory(
         selectedFolderPreset: FolderPreset,
         file: File,
-        activeFile: TFile
+        activeFile: TFile,
+        selectedConversionPreset?: ConversionPreset
     ): Promise<string> {
         let destinationDir = "";
 
         switch (selectedFolderPreset?.type) {
             case "DEFAULT":
-                destinationDir = this.getDefaultAttachmentFolderPath(activeFile);
+                destinationDir = await this.getObsidianAttachmentFolderPath(
+                    file,
+                    activeFile,
+                    selectedConversionPreset
+                );
                 break;
             case "ROOT":
                 destinationDir = this.app.vault.getRoot().path;
@@ -294,6 +300,49 @@ export class FolderAndFilenameManagement {
         }
     }
 
+    /**
+     * Asks Obsidian where an attachment of the note goes, through the public
+     * `FileManager.getAvailablePathForAttachment` API, and returns its folder.
+     *
+     * Plugins that manage attachment locations (for example per-note folders built
+     * from templates) answer this API, so the "Default (Obsidian setting)" preset
+     * follows them as well as the plain `attachmentFolderPath` setting. Only the
+     * folder is used: the file name still comes from the filename preset.
+     *
+     * Falls back to reading `attachmentFolderPath` when the API is unavailable or fails.
+     *
+     * @param file - The image being saved; its name is passed to the API, with the
+     * extension it will be saved with, since the folder may depend on either.
+     * @param activeFile - The note the image is attached to.
+     * @param selectedConversionPreset - The conversion preset, which decides the extension.
+     * @returns The vault-relative folder path, `/` for the vault root.
+     */
+    private async getObsidianAttachmentFolderPath(
+        file: File,
+        activeFile: TFile,
+        selectedConversionPreset?: ConversionPreset
+    ): Promise<string> {
+        const fileManager = this.app.fileManager as Partial<App["fileManager"]> | undefined;
+        if (typeof fileManager?.getAvailablePathForAttachment !== "function") {
+            return this.getDefaultAttachmentFolderPath(activeFile);
+        }
+
+        const lastDotIndex = file.name.lastIndexOf(".");
+        const baseName = lastDotIndex > 0 ? file.name.substring(0, lastDotIndex) : file.name;
+        const probeName = this.addCorrectExtension(baseName || "image", file, selectedConversionPreset);
+
+        try {
+            const attachmentPath = normalizePath(
+                await fileManager.getAvailablePathForAttachment(probeName, activeFile.path)
+            );
+            const lastSlashIndex = attachmentPath.lastIndexOf("/");
+            return lastSlashIndex > 0 ? attachmentPath.substring(0, lastSlashIndex) : "/";
+        } catch (error) {
+            console.warn("getAvailablePathForAttachment failed; falling back to the attachmentFolderPath setting.", error);
+            return this.getDefaultAttachmentFolderPath(activeFile);
+        }
+    }
+
     private getDefaultAttachmentFolderPath(activeFile: TFile): string {
         const attachmentPath = getVaultConfigString(this.app, "attachmentFolderPath");
         if (attachmentPath.startsWith("./")) {
@@ -428,6 +477,30 @@ export class FolderAndFilenameManagement {
             default:
                 return `${filename}${originalExtension}`;
         }
+    }
+
+    /**
+     * Gives the name to save the original image under, when it is kept in
+     * place of the converted one. The name of the converted image gets the
+     * extension of the original, so that the name matches the content.
+     *
+     * @param convertedFilename - The name that the converted image would get.
+     * @param file - The original image.
+     * @returns The name with the extension of the original, in lowercase.
+     */
+    getFilenameForOriginal(convertedFilename: string, file: File): string {
+        const originalDotIndex = file.name.lastIndexOf(".");
+        if (originalDotIndex === -1) {
+            return convertedFilename; // The original has no extension to give
+        }
+
+        const originalExtension = file.name.substring(originalDotIndex).toLowerCase();
+        const convertedDotIndex = convertedFilename.lastIndexOf(".");
+        const nameWithoutExt = convertedDotIndex > -1
+            ? convertedFilename.substring(0, convertedDotIndex)
+            : convertedFilename;
+
+        return `${nameWithoutExt}${originalExtension}`;
     }
 
     /**
